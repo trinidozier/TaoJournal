@@ -37,7 +37,6 @@ pytest==8.4.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 pytz==2025.2
-pywin32==311
 reportlab==4.4.3
 requests==2.32.5
 scipy==1.16.1
