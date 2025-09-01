@@ -230,5 +230,7 @@ def export_excel():
     return FileResponse(path, filename=os.path.basename(path))
 
 @app.get("/export/pdf")
-def export_pdf(
-    start: Optional
+def export_pdf(start: Optional[date] = Query(None), end: Optional[date] = Query(None)):
+    filtered = filter_by_date(load_trades(), start, end)
+    path = export_pdf_util(filtered)
+    return FileResponse(path, filename=os.path.basename(path))
