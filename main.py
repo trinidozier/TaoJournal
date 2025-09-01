@@ -18,6 +18,8 @@ from import_trades import parse_tradovate_csv
 from grouping import group_trades_by_entry_exit
 from export_tools import export_to_excel as export_excel_util, export_to_pdf as export_pdf_util
 from analytics import compute_summary_stats, compute_dashboard
+from os.path import basename
+
 
 # ─── Setup & Logging ──────────────────────────────────────────────────────────
 SAVE_FILE    = "annotated_trades.json"
@@ -223,4 +225,4 @@ def get_image(idx: int):
     path   = trades[idx].get("image_path")
     if not path or not os.path.exists(path):
         raise HTTPException(404, "No image for this trade")
-    return FileResponse(path)
+    return FileResponse(path, filename=basename(path))
