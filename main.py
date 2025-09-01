@@ -6,20 +6,22 @@ import shutil
 import tempfile
 import time
 import logging
+import io
+import base64
 
 from datetime import datetime, date
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+
+import matplotlib.pyplot as plt
 
 from import_trades import parse_tradovate_csv
 from grouping import group_trades_by_entry_exit
 from export_tools import export_to_excel as export_excel_util, export_to_pdf as export_pdf_util
-from analytics import compute_summary_stats, compute_dashboard
-from os.path import basename
-
+from analytics import compute_summary_stats
 
 # ─── Setup & Logging ──────────────────────────────────────────────────────────
 SAVE_FILE    = "annotated_trades.json"
@@ -28,7 +30,7 @@ MAX_BACKUPS  = 10
 IMAGE_FOLDER = "trade_images"
 
 os.makedirs(BACKUP_DIR,   exist_ok=True)
-os.makedirs(IMAGE_FOLDER,  exist_ok=True)
+os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -186,9 +188,41 @@ async def import_csv(file: UploadFile = File(...)):
 def analytics_summary():
     return compute_summary_stats(load_trades())
 
-@app.get("/analytics/dashboard")
+@app.get("/analytics/dashboard", response_class=HTMLResponse)
 def analytics_dashboard():
-    return compute_dashboard(load_trades())
+    trades = load_trades()
+    total_trades = len(trades)
+    wins = sum(1 for t in trades if t.get("r_multiple", 0) > 0)
+    losses = total_trades - wins
+    win_rate = round(100 * wins / total_trades, 1) if total_trades else 0
+    loss_rate = round(100 * losses / total_trades, 1) if total_trades else 0
+    avg_r = round(sum(t.get("r_multiple", 0) for t in trades) / total_trades, 2) if total_trades else 0
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    bars = ax.bar(["Win %", "Loss %", "Avg R"], [win_rate, loss_rate, avg_r], color=["#4caf50", "#f44336", "#2196f3"])
+    ax.set_ylim(0, 100)
+    ax.set_title("Trade Performance Overview")
+    ax.set_ylabel("Percentage / R-Multiple")
+
+    for bar in bars:
+        yval = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2, yval + 2, f"{yval:.1f}", ha='center', va='bottom')
+
+    buf = io.BytesIO()
+    plt.tight_layout()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    encoded = base64.b64encode(buf.read()).decode("utf-8")
+    buf.close()
+
+    html = f"""
+    <h2>📊 Tao Trader Dashboard</h2>
+    <img src="data:image/png;base64,{encoded}" alt="Dashboard">
+    <p>✅ Win Rate: {win_rate}%<br>
+       ❌ Loss Rate: {loss_rate}%<br>
+       📈 Avg R-Multiple: {avg_r}</p>
+    """
+    return HTMLResponse(content=html)
 
 @app.get("/export/excel")
 def export_excel():
@@ -197,32 +231,4 @@ def export_excel():
 
 @app.get("/export/pdf")
 def export_pdf(
-    start: Optional[date] = Query(None),
-    end:   Optional[date] = Query(None),
-):
-    filtered = filter_by_date(load_trades(), start, end)
-    path     = export_pdf_util(filtered)
-    return FileResponse(path, filename=os.path.basename(path))
-
-@app.post("/trades/{idx}/image")
-async def attach_image(idx: int, file: UploadFile = File(...)):
-    trades = load_trades()
-    if idx < 0 or idx >= len(trades):
-        raise HTTPException(404, "Trade not found")
-
-    ext  = os.path.splitext(file.filename)[1]
-    dest = os.path.join(IMAGE_FOLDER, f"trade_{idx}{ext}")
-    with open(dest, "wb") as f:
-        f.write(await file.read())
-
-    trades[idx]["image_path"] = dest
-    save_trades(trades)
-    return {"image_path": dest}
-
-@app.get("/trades/{idx}/image")
-def get_image(idx: int):
-    trades = load_trades()
-    path   = trades[idx].get("image_path")
-    if not path or not os.path.exists(path):
-        raise HTTPException(404, "No image for this trade")
-    return FileResponse(path, filename=basename(path))
+    start: Optional
