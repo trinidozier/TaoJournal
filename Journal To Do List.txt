@@ -1,0 +1,68 @@
+Journal To Do List
+
+1. Add Read Endpoints (CRUD-ish)
+
+Give yourself the ability to query what you’ve stored:
+
+    List all trades
+
+    Filter by date range, direction, profit/loss thresholds
+
+    Paginate with limit/offset or cursors for large journals
+
+    Fetch single trade by ID
+
+This unlocks your API as a true journal backend.
+2. Build Analytics Summaries
+
+Expose performance metrics so you can track edge and expectancy over time:
+
+    Total trades, wins vs losses, win rate
+
+    Average R-multiple, max drawdown
+
+    Time-based trends (daily/weekly/monthly PnL)
+
+    Custom buckets (e.g., grouping by setup type once you add annotations)
+
+A single /analytics endpoint can return all your key stats.
+3. Wire Up Persistence Migrations
+
+Replace the simple metadata.create_all with versioned migrations:
+
+    Install and configure Alembic
+
+    Generate your first revision (the trades table)
+
+    Learn how to write upgrade/downgrade scripts
+
+    Automate migrations on app startup or via CI
+
+This keeps your schema in sync as you evolve.
+4. In-App Backup & Restore
+
+Turn on “instant rewind” for your journal:
+
+    A POST /backup endpoint that dumps your DB into a timestamped file
+
+    A GET /backups to list existing snapshots
+
+    A POST /restore/{file} endpoint to roll back
+
+Atomic, programmatic safety nets for your data.
+5. Export Workflows
+
+Surface your trades for reporting and annotation:
+
+    CSV exports via a streaming endpoint
+
+    PDF reports with charts/images (WeasyPrint or ReportLab)
+
+    Embed your trade screenshots or entry/exit plots
+
+Ideal for sharing a monthly recap, or running external analytics.
+6. Front-End & CI/CD
+
+You’ve got the API—now build a simple React or Vue dashboard:
+
+    Fetch trades, plot R-multiple distributions with 

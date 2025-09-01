@@ -1,0 +1,10 @@
+services:
+  db:
+    image: postgres:14
+    restart: always
+    environment:
+      POSTGRES_USER: tao_user
+      POSTGRES_PASSWORD: 1Firewall%21
+      POSTGRES_DB: tao_journal
+    ports:
+      - "5432:5432"

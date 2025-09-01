@@ -1,0 +1,6 @@
+__pycache__/
+.env
+*.bak
+*.db
+*.sqlite3
+WEB
