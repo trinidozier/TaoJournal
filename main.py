@@ -218,10 +218,13 @@ def analytics_dashboard():
     html = f"""
     <h2>📊 Tao Trader Dashboard</h2>
     <img src="data:image/png;base64,{encoded}" alt="Dashboard">
-    <p>✅ Win Rate: {win_rate}%<br>
-       ❌ Loss Rate: {loss_rate}%<br>
-       📈 Avg R-Multiple: {avg_r}</p>
+    <p>
+    ✅ Win Rate: {win_rate}%<br>
+    ❌ Loss Rate: {loss_rate}%<br>
+    📈 Avg R-Multiple: {avg_r}<br>
+    </p>
     """
+
     return HTMLResponse(content=html)
 
 @app.get("/export/excel")
