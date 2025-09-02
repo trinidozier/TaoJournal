@@ -10,18 +10,24 @@ from sqlalchemy import (
     Float,
     String,
     DateTime,
+    Boolean,
     create_engine,
     text,
 )
 from dotenv import load_dotenv
 
-load_dotenv()  # load DATABASE_URL from .env
+load_dotenv()  # Load DATABASE_URL from .env
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Default to SQLite if not set
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./tao.db")
+
+# Async database connection (used in app)
 database = Database(DATABASE_URL)
 
+# Shared metadata for Alembic and SQLAlchemy
 metadata = MetaData()
 
+# Trades table
 trades = Table(
     "trades",
     metadata,
@@ -32,13 +38,19 @@ trades = Table(
     Column("direction", String, nullable=False),
     Column("pnl", Float, nullable=False),
     Column("r_multiple", Float, nullable=False),
-    Column(
-        "timestamp",
-        DateTime,
-        nullable=False,
-        server_default=text("now()")    # ← auto-populate on insert
-    ),
+    Column("timestamp", DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
 )
 
-# sync engine, used for migrations or metadata.create_all(engine)
-engine = create_engine(DATABASE_URL)
+# Users table
+users = Table(
+    "users",
+    metadata,
+    Column("id", Integer, primary_key=True, index=True),
+    Column("email", String, unique=True, index=True, nullable=False),
+    Column("hashed_password", String, nullable=False),
+    Column("created_at", DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("is_active", Boolean, nullable=False, server_default=text("1")),
+)
+
+# Sync engine for migrations and metadata.create_all
+engine = create_engine(DATABASE_URL, echo=True)

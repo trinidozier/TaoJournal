@@ -9,21 +9,35 @@ import logging
 import io
 import base64
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query
+from fastapi import (
+    FastAPI, HTTPException, UploadFile, File, Query,
+    status, Depends
+)
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
-
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr
 import matplotlib.pyplot as plt
+import jwt
 
+from db import engine, metadata, database, users
+from auth import hash_password, verify_password
 from import_trades import parse_tradovate_csv
 from grouping import group_trades_by_entry_exit
 from export_tools import export_to_excel as export_excel_util, export_to_pdf as export_pdf_util
 from analytics import compute_summary_stats
 
-# ─── Setup & Logging ──────────────────────────────────────────────────────────
+from dotenv import load_dotenv
+
+load_dotenv()   # reads .env into os.environ
+
+# ─── Config & Logging ────────────────────────────────────────────────────────
+SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
 SAVE_FILE    = "annotated_trades.json"
 BACKUP_DIR   = "backups"
 MAX_BACKUPS  = 10
@@ -35,7 +49,9 @@ os.makedirs(IMAGE_FOLDER, exist_ok=True)
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-# ─── Atomic JSON Storage ──────────────────────────────────────────────────────
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+# ─── JSON Storage Helpers ────────────────────────────────────────────────────
 def atomic_write_json(path: str, data: List[dict]):
     dirpath = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(dir=dirpath, text=True)
@@ -56,16 +72,23 @@ def rotate_backups(src: str):
     while len(backs) > MAX_BACKUPS:
         os.remove(os.path.join(BACKUP_DIR, backs.pop(0)))
 
-def load_trades() -> List[dict]:
+def load_all_trades() -> List[dict]:
     if not os.path.exists(SAVE_FILE):
         return []
     with open(SAVE_FILE) as f:
         return json.load(f)
 
-def save_trades(trades: List[dict]):
+def load_trades(user_email: str) -> List[dict]:
+    return [t for t in load_all_trades() if t.get("user") == user_email]
+
+def save_trades(user_trades: List[dict], user_email: str):
+    all_trades   = load_all_trades()
+    others       = [t for t in all_trades if t.get("user") != user_email]
+    merged       = others + user_trades
+
     if os.path.exists(SAVE_FILE):
         rotate_backups(SAVE_FILE)
-    atomic_write_json(SAVE_FILE, trades)
+    atomic_write_json(SAVE_FILE, merged)
 
 def filter_by_date(trades: List[dict], start: Optional[date], end: Optional[date]) -> List[dict]:
     if not start and not end:
@@ -81,6 +104,27 @@ def filter_by_date(trades: List[dict], start: Optional[date], end: Optional[date
         if ((not start) or start <= d) and ((not end) or d <= end):
             out.append(t)
     return out
+
+# ─── Authentication Helpers ─────────────────────────────────────────────────
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        query = users.select().where(users.c.email == email)
+        user = await database.fetch_one(query)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
 
 # ─── Pydantic Models ─────────────────────────────────────────────────────────
 class TradeIn(BaseModel):
@@ -105,135 +149,151 @@ class Trade(TradeIn):
     pnl          : float
     r_multiple   : float
     image_path   : Optional[str] = ""
+    user         : str
 
-# ─── FastAPI App ─────────────────────────────────────────────────────────────
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+
+# ─── FastAPI App Initialization ─────────────────────────────────────────────
 app = FastAPI()
 
+@app.on_event("startup")
+async def startup():
+    metadata.create_all(engine)
+    await database.connect()
+
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
+
+# ─── User Endpoints ─────────────────────────────────────────────────────────
+@app.post("/register", status_code=status.HTTP_201_CREATED)
+async def register_user(user: UserCreate):
+    query = users.select().where(users.c.email == user.email)
+    if await database.fetch_one(query):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    hashed_pw = hash_password(user.password)
+    insert = users.insert().values(email=user.email, hashed_password=hashed_pw)
+    await database.execute(insert)
+    return {"message": "User registered successfully"}
+
+@app.post("/login")
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    query = users.select().where(users.c.email == form_data.username)
+    user = await database.fetch_one(query)
+    if not user or not verify_password(form_data.password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_access_token(data={"sub": user["email"]})
+    return {"access_token": token, "token_type": "bearer"}
+
+# ─── Trade Endpoints ────────────────────────────────────────────────────────
+
 @app.get("/trades", response_model=List[Trade])
-def list_trades():
-    return load_trades()
+async def list_trades(current_user: dict = Depends(get_current_user)):
+    return load_trades(current_user["email"])
+
 
 @app.post("/trades", response_model=Trade)
-def add_trade(payload: TradeIn):
-    try:
-        trades   = load_trades()
-        direction = "Long" if payload.sell_price > payload.buy_price else "Short"
-        pnl       = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
-        risk      = abs(payload.buy_price - payload.stop) if payload.stop else 0
+async def add_trade(payload: TradeIn,
+                    current_user: dict = Depends(get_current_user)):
+    trades    = load_trades(current_user["email"])
+    direction = "Long" if payload.sell_price > payload.buy_price else "Short"
+    pnl       = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
+    risk      = abs(payload.buy_price - payload.stop) if payload.stop else 0
+    r_mult    = round(pnl / risk, 2) if risk else 0.0
+
+    record = payload.dict()
+    record.update({
+        "direction":  direction,
+        "pnl":        round(pnl, 2),
+        "r_multiple": r_mult,
+        "image_path": "",
+        "user":       current_user["email"]
+    })
+
+    trades.append(record)
+    save_trades(trades, current_user["email"])
+    return record
+
+
+@app.delete("/trades/{index}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_trade(index: int,
+                       current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    if index < 0 or index >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    trades.pop(index)
+    save_trades(trades, current_user["email"])
+
+
+@app.post("/import_csv")
+async def import_csv(file: UploadFile = File(...),
+                     current_user: dict = Depends(get_current_user)):
+    content = await file.read()
+    rows    = parse_tradovate_csv(io.BytesIO(content))
+    trades  = load_trades(current_user["email"])
+
+    for payload in rows:
+        direction = "Long" if payload["sell_price"] > payload["buy_price"] else "Short"
+        pnl       = (payload["sell_price"] - payload["buy_price"]) if direction == "Long" else (payload["buy_price"] - payload["sell_price"])
+        risk      = abs(payload["buy_price"] - payload.get("stop", 0)) if payload.get("stop") else 0
         r_mult    = round(pnl / risk, 2) if risk else 0.0
 
-        record = payload.dict()
+        record = payload.copy()
         record.update({
-            "direction":   direction,
-            "pnl":         round(pnl, 2),
-            "r_multiple":  r_mult,
-            "image_path":  ""
+            "direction":  direction,
+            "pnl":        round(pnl, 2),
+            "r_multiple": r_mult,
+            "image_path": "",
+            "user":       current_user["email"]
         })
-
         trades.append(record)
-        save_trades(trades)
-        return record
 
-    except Exception:
-        logger.exception("Failed to save new trade")
-        raise HTTPException(status_code=500, detail="Unable to persist trade—see server logs")
+    save_trades(trades, current_user["email"])
+    return {"imported": len(rows)}
 
-@app.delete("/trades/{idx}")
-def delete_trade(idx: int):
-    trades = load_trades()
-    if idx < 0 or idx >= len(trades):
-        raise HTTPException(404, "Trade not found")
-    trades.pop(idx)
-    save_trades(trades)
-    return {"detail": "deleted"}
 
-@app.post("/import-csv")
-async def import_csv(file: UploadFile = File(...)):
-    content       = (await file.read()).decode()
-    raw           = parse_tradovate_csv(content)
-    grouped       = group_trades_by_entry_exit(raw)
+@app.get("/analytics")
+async def analytics(start: Optional[date] = Query(None),
+                    end:   Optional[date] = Query(None),
+                    current_user: dict = Depends(get_current_user)):
+    trades   = load_trades(current_user["email"])
+    filtered = filter_by_date(trades, start, end)
+    return compute_summary_stats(filtered)
 
-    trades        = load_trades()
-    existing_keys = {
-        (
-            t["instrument"], t["buy_timestamp"], t["sell_timestamp"],
-            t["qty"],        t["buy_price"],      t["sell_price"]
-        )
-        for t in trades
-    }
-
-    added = 0
-    for t0 in grouped:
-        key = (
-            t0["Instrument"], t0["BuyTimestamp"], t0["SellTimestamp"],
-            t0["Qty"],        t0["BuyPrice"],      t0["SellPrice"]
-        )
-        if key in existing_keys:
-            continue
-
-        payload = TradeIn(
-            instrument      = t0["Instrument"],
-            buy_timestamp   = t0["BuyTimestamp"],
-            sell_timestamp  = t0["SellTimestamp"],
-            buy_price       = t0["BuyPrice"],
-            sell_price      = t0["SellPrice"],
-            qty             = t0["Qty"]
-        )
-        _ = add_trade(payload)
-        added += 1
-
-    return {"added": added}
-
-@app.get("/analytics/summary")
-def analytics_summary():
-    return compute_summary_stats(load_trades())
-
-@app.get("/analytics/dashboard", response_class=HTMLResponse)
-def analytics_dashboard():
-    trades = load_trades()
-    total_trades = len(trades)
-    wins = sum(1 for t in trades if t.get("r_multiple", 0) > 0)
-    losses = total_trades - wins
-    win_rate = round(100 * wins / total_trades, 1) if total_trades else 0
-    loss_rate = round(100 * losses / total_trades, 1) if total_trades else 0
-    avg_r = round(sum(t.get("r_multiple", 0) for t in trades) / total_trades, 2) if total_trades else 0
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    bars = ax.bar(["Win %", "Loss %", "Avg R"], [win_rate, loss_rate, avg_r], color=["#4caf50", "#f44336", "#2196f3"])
-    ax.set_ylim(0, 100)
-    ax.set_title("Trade Performance Overview")
-    ax.set_ylabel("Percentage / R-Multiple")
-
-    for bar in bars:
-        yval = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2, yval + 2, f"{yval:.1f}", ha='center', va='bottom')
-
-    buf = io.BytesIO()
-    plt.tight_layout()
-    plt.savefig(buf, format="png")
-    buf.seek(0)
-    encoded = base64.b64encode(buf.read()).decode("utf-8")
-    buf.close()
-
-    html = f"""
-    <h2>📊 Tao Trader Dashboard</h2>
-    <img src="data:image/png;base64,{encoded}" alt="Dashboard">
-    <p>
-    ✅ Win Rate: {win_rate}%<br>
-    ❌ Loss Rate: {loss_rate}%<br>
-    📈 Avg R-Multiple: {avg_r}<br>
-    </p>
-    """
-
-    return HTMLResponse(content=html)
 
 @app.get("/export/excel")
-def export_excel():
-    path = export_excel_util(load_trades())
-    return FileResponse(path, filename=os.path.basename(path))
+async def export_excel(start: Optional[date] = Query(None),
+                       end:   Optional[date] = Query(None),
+                       current_user: dict = Depends(get_current_user)):
+    trades   = load_trades(current_user["email"])
+    filtered = filter_by_date(trades, start, end)
+    xlsx_buf = export_excel_util(filtered)
+    return FileResponse(xlsx_buf,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        filename="trades.xlsx")
+
 
 @app.get("/export/pdf")
-def export_pdf(start: Optional[date] = Query(None), end: Optional[date] = Query(None)):
-    filtered = filter_by_date(load_trades(), start, end)
-    path = export_pdf_util(filtered)
-    return FileResponse(path, filename=os.path.basename(path))
+async def export_pdf(start: Optional[date] = Query(None),
+                     end:   Optional[date] = Query(None),
+                     current_user: dict = Depends(get_current_user)):
+    trades   = load_trades(current_user["email"])
+    filtered = filter_by_date(trades, start, end)
+    pdf_buf  = export_pdf_util(filtered)
+    return FileResponse(pdf_buf, media_type="application/pdf", filename="trades.pdf")
+
+
+@app.get("/trades/{index}/image")
+async def get_trade_image(index: int,
+                          current_user: dict = Depends(get_current_user)):
+    trades     = load_trades(current_user["email"])
+    if index < 0 or index >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    img_path = trades[index].get("image_path")
+    if not img_path or not os.path.exists(img_path):
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    return FileResponse(img_path)
