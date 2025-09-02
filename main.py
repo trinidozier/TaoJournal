@@ -20,7 +20,9 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 import matplotlib.pyplot as plt
-import jwt
+# switch to python-jose’s jwt + JWTError
+from jose import jwt, JWTError
+
 
 from db import engine, metadata, database, users
 from auth import hash_password, verify_password
@@ -112,19 +114,24 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token")
+
         query = users.select().where(users.c.email == email)
         user = await database.fetch_one(query)
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
         return user
-    except jwt.PyJWTError:
+
+    # catch python-jose’s error, not PyJWTError
+    except JWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
+
 
 # ─── Pydantic Models ─────────────────────────────────────────────────────────
 class TradeIn(BaseModel):
@@ -166,6 +173,14 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     await database.disconnect()
+    
+# ─── JWT Smoke-Test Endpoint  ──────────────────────────────────────
+@app.get("/jwt-test")
+def jwt_test():
+    dummy = {"sub": "test@example.com"}
+    token = create_access_token(dummy)
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    return {"encoded": token, "decoded": decoded}
 
 # ─── User Endpoints ─────────────────────────────────────────────────────────
 @app.post("/register", status_code=status.HTTP_201_CREATED)
