@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+sqlalchemy
+databases[sqlite]
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+matplotlib
+pandas
+openpyxl
+reportlab
+stripe
+email-validator
+pytest
