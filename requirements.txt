@@ -46,6 +46,8 @@ fastapi==0.116.1
     # via -r requirements.in
 fonttools==4.59.0
     # via matplotlib
+fpdf==1.7.2
+    # via -r requirements.in
 greenlet==3.2.4
     # via sqlalchemy
 h11==0.16.0

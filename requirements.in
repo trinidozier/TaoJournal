@@ -12,3 +12,4 @@ reportlab
 stripe
 email-validator
 pytest
+fpdf
