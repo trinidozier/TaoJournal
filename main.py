@@ -165,6 +165,11 @@ class UserCreate(BaseModel):
 # ─── FastAPI App Initialization ─────────────────────────────────────────────
 app = FastAPI()
 
+@app.get("/")
+def root():
+    return {"message": "Tao Trader is live"}
+
+
 @app.get("/ping")
 def ping():
     return {"status": "ok"}
