@@ -16,6 +16,7 @@ from fastapi import (
     FastAPI, HTTPException, UploadFile, File, Query,
     status, Depends
 )
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
@@ -182,6 +183,15 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     await database.disconnect()
+    
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or ["http://localhost:5173"] for tighter security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
     
 # ─── JWT Smoke-Test Endpoint  ──────────────────────────────────────
 @app.get("/jwt-test")
