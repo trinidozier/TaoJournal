@@ -41,11 +41,15 @@ Tao Trader isn’t just a coding exercise—it’s a tool I use to track real tr
 
     How to design endpoints that are intuitive and resilient
 
+    How to add user authentication for SaaS
+
+    How to build a Web-based UI
+
 🚀 Next Steps
 
-    Add user authentication and Stripe integration for SaaS launch
+    Add Stripe integration for SaaS launch
 
-    Build a web UI for non-technical users
+    Add AI based inferences about users trade data
 
     Expand analytics to include equity curves and risk-adjusted metrics
 
