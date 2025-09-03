@@ -108,6 +108,8 @@ python-dotenv==1.1.1
     # via -r requirements.in
 python-jose[cryptography]==3.5.0
     # via -r requirements.in
+python-multipart==0.0.20
+    # via -r requirements.in
 pytz==2023.3
     # via pandas
 reportlab==4.4.3

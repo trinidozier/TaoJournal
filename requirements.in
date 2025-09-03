@@ -13,3 +13,4 @@ stripe
 email-validator
 pytest
 fpdf
+python-multipart
