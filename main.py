@@ -165,6 +165,10 @@ class UserCreate(BaseModel):
 # ─── FastAPI App Initialization ─────────────────────────────────────────────
 app = FastAPI()
 
+@app.get("/ping")
+def ping():
+    return {"status": "ok"}
+
 @app.on_event("startup")
 async def startup():
     metadata.create_all(engine)
