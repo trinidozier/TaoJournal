@@ -1,5 +1,3 @@
-# db.py
-
 import os
 from databases import Database
 from sqlalchemy import (
@@ -41,15 +39,18 @@ trades = Table(
     Column("timestamp", DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
 )
 
-# Users table
+# Users table — updated to match your expanded registration model
 users = Table(
     "users",
     metadata,
     Column("id", Integer, primary_key=True, index=True),
+    Column("first_name", String, nullable=False),
+    Column("last_name", String, nullable=False),
+    Column("billing_address", String, nullable=False),
     Column("email", String, unique=True, index=True, nullable=False),
     Column("hashed_password", String, nullable=False),
     Column("created_at", DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
-    Column("is_active", Boolean, nullable=False, server_default=text("1")),
+    Column("is_active", Boolean, nullable=False, server_default=text("TRUE")),
 )
 
 # Sync engine for migrations and metadata.create_all
