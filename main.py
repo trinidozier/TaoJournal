@@ -14,12 +14,12 @@ from typing import List, Optional
 
 from fastapi import (
     FastAPI, HTTPException, UploadFile, File, Query,
-    status, Depends
+    status, Depends, Request
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, validator
 import matplotlib.pyplot as plt
 # switch to python-jose’s jwt + JWTError
 from jose import jwt, JWTError
@@ -160,8 +160,18 @@ class Trade(TradeIn):
     user         : str
 
 class UserCreate(BaseModel):
+    first_name: str
+    last_name: str
+    billing_address: str
     email: EmailStr
     password: str
+    verify_password: str
+
+    @validator("verify_password")
+    def passwords_match(cls, v, values):
+        if "password" in values and v != values["password"]:
+            raise ValueError("Passwords do not match")
+        return v
 
 # ─── FastAPI App Initialization ─────────────────────────────────────────────
 app = FastAPI()
@@ -207,16 +217,32 @@ async def register_user(user: UserCreate):
     query = users.select().where(users.c.email == user.email)
     if await database.fetch_one(query):
         raise HTTPException(status_code=400, detail="Email already registered")
+
     hashed_pw = hash_password(user.password)
-    insert = users.insert().values(email=user.email, hashed_password=hashed_pw)
+
+    insert = users.insert().values(
+        first_name=user.first_name,
+        last_name=user.last_name,
+        billing_address=user.billing_address,
+        email=user.email,
+        hashed_password=hashed_pw
+    )
+
     await database.execute(insert)
     return {"message": "User registered successfully"}
 
+
+# Updated Login endpoint login was not working
 @app.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    query = users.select().where(users.c.email == form_data.username)
+async def login(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+    query = users.select().where(users.c.email == email)
     user = await database.fetch_one(query)
-    if not user or not verify_password(form_data.password, user["hashed_password"]):
+    if not user or not verify_password(password, user["hashed_password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token(data={"sub": user["email"]})
     return {"access_token": token, "token_type": "bearer"}
@@ -331,3 +357,39 @@ async def get_trade_image(index: int,
         raise HTTPException(status_code=404, detail="Image not found")
 
     return FileResponse(img_path)
+
+# Added these endpoints 09/03 for Dashboard.jsx
+
+@app.put("/trades/{index}", response_model=Trade)
+async def update_trade(index: int, payload: TradeIn, current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    if index < 0 or index >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    direction = "Long" if payload.sell_price > payload.buy_price else "Short"
+    pnl = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
+    risk = abs(payload.buy_price - payload.stop) if payload.stop else 0
+    r_mult = round(pnl / risk, 2) if risk else 0.0
+    updated = payload.dict()
+    updated.update({
+        "direction": direction,
+        "pnl": round(pnl, 2),
+        "r_multiple": r_mult,
+    })
+    trades[index].update(updated)
+    save_trades(trades, current_user["email"])
+    return trades[index]
+
+@app.post("/trades/{index}/image")
+async def upload_trade_image(index: int, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    if index < 0 or index >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    ext = os.path.splitext(file.filename)[1]
+    img_path = os.path.join(IMAGE_FOLDER, f"trade_{current_user['email']}_{index}{ext}")
+    with open(img_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    trades[index]["image_path"] = img_path
+    save_trades(trades, current_user["email"])
+    return {"image_path": img_path}
+    
+    
