@@ -25,6 +25,8 @@ function Dashboard() {
     preparedness: '',
     what_i_learned: '',
     changes_needed: '',
+    direction: 'Long',  // Default to Long
+    trade_type: 'Stock',  // Default to Stock
   });
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
@@ -42,7 +44,7 @@ function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      console.log('Fetching trades with token:', token.substring(0, 10) + '...'); // Partial token for debug
+      console.log('Fetching trades with token:', token.substring(0, 10) + '...');
       const res = await fetch('https://taojournal-production.up.railway.app/trades', {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -117,8 +119,13 @@ function Dashboard() {
   };
 
   const openEditModal = (index) => {
+    const trade = trades[index];
     setEditIndex(index);
-    setFormData(trades[index]);
+    setFormData({
+      ...trade,
+      buy_timestamp: trade.buy_timestamp.slice(0, 16),  // Format for datetime-local
+      sell_timestamp: trade.sell_timestamp.slice(0, 16),
+    });
     setShowEditModal(true);
   };
 
@@ -259,6 +266,7 @@ function Dashboard() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Instrument</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trade Type</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Buy Timestamp</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sell Timestamp</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Direction</th>
@@ -284,6 +292,7 @@ function Dashboard() {
               {trades.map((trade, index) => (
                 <tr key={index} className={trade.direction === 'Long' ? 'hover:bg-green-100' : 'hover:bg-red-100'}>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.instrument}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{trade.trade_type}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.buy_timestamp}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.sell_timestamp}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.direction}</td>
@@ -329,8 +338,21 @@ function Dashboard() {
             <h2 className="text-2xl font-bold mb-6 text-gray-800">Add New Trade</h2>
             <form onSubmit={handleAddTrade} className="space-y-4">
               <input name="instrument" placeholder="Instrument (e.g., AAPL)" value={formData.instrument} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
-              <input name="buy_timestamp" placeholder="Buy Timestamp (YYYY-MM-DDTHH:MM:SS)" value={formData.buy_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
-              <input name="sell_timestamp" placeholder="Sell Timestamp (YYYY-MM-DDTHH:MM:SS)" value={formData.sell_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
+              <select name="trade_type" value={formData.trade_type} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none">
+                <option value="Stock">Stock</option>
+                <option value="Call">Call</option>
+                <option value="Put">Put</option>
+                <option value="Straddle">Straddle</option>
+                <option value="Covered Call">Covered Call</option>
+                <option value="Cash Secured Put">Cash Secured Put</option>
+                <option value="Other">Other</option>
+              </select>
+              <input name="buy_timestamp" type="datetime-local" value={formData.buy_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
+              <input name="sell_timestamp" type="datetime-local" value={formData.sell_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
+              <select name="direction" value={formData.direction} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none">
+                <option value="Long">Long</option>
+                <option value="Short">Short</option>
+              </select>
               <input name="buy_price" placeholder="Buy Price" value={formData.buy_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="sell_price" placeholder="Sell Price" value={formData.sell_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="qty" placeholder="Quantity" value={formData.qty} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" />
@@ -352,16 +374,28 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Edit Trade Modal (similar styling updates) */}
+      {/* Edit Trade Modal */}
       {showEditModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-8 rounded-lg shadow-2xl border border-gray-200 w-full max-w-lg overflow-y-auto max-h-[80vh]">
             <h2 className="text-2xl font-bold mb-6 text-gray-800">Edit Trade</h2>
             <form onSubmit={handleEditTrade} className="space-y-4">
-              {/* Same inputs as add, with values from formData */}
               <input name="instrument" placeholder="Instrument (e.g., AAPL)" value={formData.instrument} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
-              <input name="buy_timestamp" placeholder="Buy Timestamp (YYYY-MM-DDTHH:MM:SS)" value={formData.buy_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
-              <input name="sell_timestamp" placeholder="Sell Timestamp (YYYY-MM-DDTHH:MM:SS)" value={formData.sell_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
+              <select name="trade_type" value={formData.trade_type} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none">
+                <option value="Stock">Stock</option>
+                <option value="Call">Call</option>
+                <option value="Put">Put</option>
+                <option value="Straddle">Straddle</option>
+                <option value="Covered Call">Covered Call</option>
+                <option value="Cash Secured Put">Cash Secured Put</option>
+                <option value="Other">Other</option>
+              </select>
+              <input name="buy_timestamp" type="datetime-local" value={formData.buy_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
+              <input name="sell_timestamp" type="datetime-local" value={formData.sell_timestamp} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required />
+              <select name="direction" value={formData.direction} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none">
+                <option value="Long">Long</option>
+                <option value="Short">Short</option>
+              </select>
               <input name="buy_price" placeholder="Buy Price" value={formData.buy_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="sell_price" placeholder="Sell Price" value={formData.sell_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="qty" placeholder="Quantity" value={formData.qty} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" />

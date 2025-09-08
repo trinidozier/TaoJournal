@@ -21,7 +21,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, validator
 import matplotlib.pyplot as plt
-# switch to python-jose’s jwt + JWTError
 from jose import jwt, JWTError
 
 
@@ -78,8 +77,12 @@ def rotate_backups(src: str):
 def load_all_trades() -> List[dict]:
     if not os.path.exists(SAVE_FILE):
         return []
-    with open(SAVE_FILE) as f:
-        return json.load(f)
+    try:
+        with open(SAVE_FILE) as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
 
 def load_trades(user_email: str) -> List[dict]:
     return [t for t in load_all_trades() if t.get("user") == user_email]
@@ -129,7 +132,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             raise HTTPException(status_code=401, detail="User not found")
         return user
 
-    # catch python-jose’s error, not PyJWTError
     except JWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
 
@@ -142,6 +144,8 @@ class TradeIn(BaseModel):
     buy_price       : float
     sell_price      : float
     qty             : int
+    direction       : Optional[str]   = None  # Optional, will calculate if not provided
+    trade_type      : Optional[str]   = "Stock"  # New field for options support
     strategy        : Optional[str]   = ""
     confidence      : Optional[int]   = 0
     target          : Optional[float] = 0.0
@@ -232,7 +236,6 @@ async def register_user(user: UserCreate):
     return {"message": "User registered successfully"}
 
 
-# Updated Login endpoint login was not working
 @app.post("/login")
 async def login(request: Request):
     data = await request.json()
@@ -258,7 +261,8 @@ async def list_trades(current_user: dict = Depends(get_current_user)):
 async def add_trade(payload: TradeIn,
                     current_user: dict = Depends(get_current_user)):
     trades    = load_trades(current_user["email"])
-    direction = "Long" if payload.sell_price > payload.buy_price else "Short"
+    # Use provided direction or calculate
+    direction = payload.direction or ("Long" if payload.sell_price > payload.buy_price else "Short")
     pnl       = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
     risk      = abs(payload.buy_price - payload.stop) if payload.stop else 0
     r_mult    = round(pnl / risk, 2) if risk else 0.0
@@ -276,6 +280,26 @@ async def add_trade(payload: TradeIn,
     save_trades(trades, current_user["email"])
     return record
 
+
+@app.put("/trades/{index}", response_model=Trade)
+async def update_trade(index: int, payload: TradeIn, current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    if index < 0 or index >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    # Use provided direction or calculate
+    direction = payload.direction or ("Long" if payload.sell_price > payload.buy_price else "Short")
+    pnl = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
+    risk = abs(payload.buy_price - payload.stop) if payload.stop else 0
+    r_mult = round(pnl / risk, 2) if risk else 0.0
+    updated = payload.dict()
+    updated.update({
+        "direction": direction,
+        "pnl": round(pnl, 2),
+        "r_multiple": r_mult,
+    })
+    trades[index].update(updated)
+    save_trades(trades, current_user["email"])
+    return trades[index]
 
 @app.delete("/trades/{index}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_trade(index: int,
@@ -306,6 +330,7 @@ async def import_csv(file: UploadFile = File(...),
             "pnl":        round(pnl, 2),
             "r_multiple": r_mult,
             "image_path": "",
+            "trade_type": "Stock",  # Default for imported
             "user":       current_user["email"]
         })
         trades.append(record)
@@ -358,27 +383,6 @@ async def get_trade_image(index: int,
 
     return FileResponse(img_path)
 
-# Added these endpoints 09/03 for Dashboard.jsx
-
-@app.put("/trades/{index}", response_model=Trade)
-async def update_trade(index: int, payload: TradeIn, current_user: dict = Depends(get_current_user)):
-    trades = load_trades(current_user["email"])
-    if index < 0 or index >= len(trades):
-        raise HTTPException(status_code=404, detail="Trade not found")
-    direction = "Long" if payload.sell_price > payload.buy_price else "Short"
-    pnl = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
-    risk = abs(payload.buy_price - payload.stop) if payload.stop else 0
-    r_mult = round(pnl / risk, 2) if risk else 0.0
-    updated = payload.dict()
-    updated.update({
-        "direction": direction,
-        "pnl": round(pnl, 2),
-        "r_multiple": r_mult,
-    })
-    trades[index].update(updated)
-    save_trades(trades, current_user["email"])
-    return trades[index]
-
 @app.post("/trades/{index}/image")
 async def upload_trade_image(index: int, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     trades = load_trades(current_user["email"])
@@ -391,5 +395,3 @@ async def upload_trade_image(index: int, file: UploadFile = File(...), current_u
     trades[index]["image_path"] = img_path
     save_trades(trades, current_user["email"])
     return {"image_path": img_path}
-    
-    
