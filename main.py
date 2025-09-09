@@ -1,5 +1,3 @@
-# main.py
-
 import os
 import json
 import shutil
@@ -24,14 +22,13 @@ from tda.auth import easy_client
 from tda.client import Client
 from cryptography.fernet import Fernet
 import pandas as pd  # For analytics
-
 from db import engine, metadata, database, users, strategies, trade_rules
 from auth import hash_password, verify_password
 from import_trades import parse_smart_csv
 from grouping import group_trades_by_entry_exit
 from export_tools import export_to_excel as export_excel_util, export_to_pdf as export_pdf_util
 from analytics import compute_summary_stats
-
+from schemas import Strategy, StrategyCreate, Rule, RuleCreate, TradeIn, Trade, UserCreate, IBKRConnect, TradeRuleUpdate
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -44,18 +41,14 @@ SCHWAB_CLIENT_ID = os.getenv("SCHWAB_CLIENT_ID")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = os.getenv("IBKR_PORT", "7497")  # 7496 for live, 7497 for paper
-
 SAVE_FILE = "annotated_trades.json"
 BACKUP_DIR = "backups"
 MAX_BACKUPS = 10
 IMAGE_FOLDER = "trade_images"
-
 os.makedirs(BACKUP_DIR, exist_ok=True)
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
-
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 # ─── JSON Storage Helpers ────────────────────────────────────────────────────
@@ -140,67 +133,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
 
-# ─── Pydantic Models ─────────────────────────────────────────────────────────
-class TradeIn(BaseModel):
-    instrument: str
-    buy_timestamp: datetime
-    sell_timestamp: datetime
-    buy_price: float
-    sell_price: float
-    qty: int
-    direction: Optional[str] = None
-    trade_type: Optional[str] = "Stock"
-    strategy_id: Optional[int] = None
-    rule_adherence: Optional[List[Dict]] = []  # List of {rule_id, followed}
-    confidence: Optional[int] = 0
-    target: Optional[float] = 0.0
-    stop: Optional[float] = 0.0
-    notes: Optional[str] = ""
-    goals: Optional[str] = ""
-    preparedness: Optional[str] = ""
-    what_i_learned: Optional[str] = ""
-    changes_needed: Optional[str] = ""
-
-class Trade(TradeIn):
-    direction: str
-    pnl: float
-    r_multiple: float
-    image_path: Optional[str] = ""
-    user: str
-    id: Optional[int] = None
-
-class UserCreate(BaseModel):
-    first_name: str
-    last_name: str
-    billing_address: str
-    email: EmailStr
-    password: str
-    verify_password: str
-
-    @validator("verify_password")
-    def passwords_match(cls, v, values):
-        if "password" in values and v != values["password"]:
-            raise ValueError("Passwords do not match")
-        return v
-
-class IBKRConnect(BaseModel):
-    api_token: str
-    account_id: str
-
-class StrategyCreate(BaseModel):
-    name: str
-    description: Optional[str] = ""
-
-class RuleCreate(BaseModel):
-    strategy_id: int
-    rule_type: str  # 'entry' or 'exit'
-    rule_text: str
-
-class TradeRuleUpdate(BaseModel):
-    followed: bool
-
 # ─── FastAPI App Initialization ─────────────────────────────────────────────
-app = FastAPI()
+app = FastAPI(title="Tao Trader API")
 
 @app.get("/")
 def root():
@@ -267,7 +201,7 @@ async def login(request: Request):
     return {"access_token": token, "token_type": "bearer"}
 
 # ─── Strategy and Rule Endpoints ────────────────────────────────────────────
-@app.post("/strategies", response_model=Dict)
+@app.post("/strategies", response_model=Strategy)
 async def create_strategy(strategy: StrategyCreate, current_user: dict = Depends(get_current_user)):
     insert = strategies.insert().values(
         user_email=current_user["email"],
@@ -275,14 +209,24 @@ async def create_strategy(strategy: StrategyCreate, current_user: dict = Depends
         description=strategy.description
     )
     strategy_id = await database.execute(insert)
-    return {"id": strategy_id, "name": strategy.name, "description": strategy.description}
+    # Fetch the created strategy to return it fully
+    query = strategies.select().where(strategies.c.id == strategy_id)
+    result = await database.fetch_one(query)
+    if not result:
+        raise HTTPException(status_code=404, detail="Strategy not found after creation")
+    return dict(result)  # Convert Record to dict for Pydantic
 
-@app.get("/strategies", response_model=List[Dict])
+@app.get("/strategies", response_model=List[Strategy])
 async def list_strategies(current_user: dict = Depends(get_current_user)):
+    """
+    Get strategies for the current user (used for dropdown in add rule page).
+    Converts Record objects to dicts to fix Pydantic validation error.
+    """
     query = strategies.select().where(strategies.c.user_email == current_user["email"])
-    return await database.fetch_all(query)
+    result = await database.fetch_all(query)
+    return [dict(record) for record in result]  # Convert each Record to dict
 
-@app.post("/rules", response_model=Dict)
+@app.post("/rules", response_model=Rule)
 async def create_rule(rule: RuleCreate, current_user: dict = Depends(get_current_user)):
     strategy_query = strategies.select().where(strategies.c.id == rule.strategy_id, strategies.c.user_email == current_user["email"])
     if not await database.fetch_one(strategy_query):
@@ -293,25 +237,30 @@ async def create_rule(rule: RuleCreate, current_user: dict = Depends(get_current
         rule_text=rule.rule_text
     )
     rule_id = await database.execute(insert)
-    return {"id": rule_id, "strategy_id": rule.strategy_id, "rule_type": rule.rule_type, "rule_text": rule.rule_text}
+    # Fetch the created rule to return it fully
+    query = trade_rules.select().where(trade_rules.c.id == rule_id)
+    result = await database.fetch_one(query)
+    return dict(result)  # Convert Record to dict for Pydantic
 
-@app.get("/rules/{strategy_id}", response_model=List[Dict])
+@app.get("/rules/{strategy_id}", response_model=List[Rule])
 async def list_rules(strategy_id: int, current_user: dict = Depends(get_current_user)):
     strategy_query = strategies.select().where(strategies.c.id == strategy_id, strategies.c.user_email == current_user["email"])
     if not await database.fetch_one(strategy_query):
         raise HTTPException(status_code=404, detail="Strategy not found or not owned by user")
     query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id, trade_rules.c.trade_id.is_(None))
-    return await database.fetch_all(query)
+    result = await database.fetch_all(query)
+    return [dict(record) for record in result]  # Convert each Record to dict
 
-@app.get("/trade_rules/{trade_id}", response_model=List[Dict])
+@app.get("/trade_rules/{trade_id}", response_model=List[Rule])
 async def list_trade_rules(trade_id: int, current_user: dict = Depends(get_current_user)):
     trades = load_trades(current_user["email"])
     if trade_id < 0 or trade_id >= len(trades):
         raise HTTPException(status_code=404, detail="Trade not found")
     query = trade_rules.select().where(trade_rules.c.trade_id == trade_id)
-    return await database.fetch_all(query)
+    result = await database.fetch_all(query)
+    return [dict(record) for record in result]  # Convert each Record to dict
 
-@app.post("/trade_rules", response_model=Dict)
+@app.post("/trade_rules", response_model=Rule)
 async def create_trade_rule(rule: RuleCreate, trade_id: int, current_user: dict = Depends(get_current_user)):
     strategy_query = strategies.select().where(strategies.c.id == rule.strategy_id, strategies.c.user_email == current_user["email"])
     if not await database.fetch_one(strategy_query):
@@ -327,9 +276,12 @@ async def create_trade_rule(rule: RuleCreate, trade_id: int, current_user: dict 
         followed=False
     )
     rule_id = await database.execute(insert)
-    return {"id": rule_id, "strategy_id": rule.strategy_id, "rule_type": rule.rule_type, "rule_text": rule.rule_text, "trade_id": trade_id}
+    # Fetch the created rule to return it fully
+    query = trade_rules.select().where(trade_rules.c.id == rule_id)
+    result = await database.fetch_one(query)
+    return dict(result)  # Convert Record to dict for Pydantic
 
-@app.put("/trade_rules/{rule_id}", response_model=Dict)
+@app.put("/trade_rules/{rule_id}", response_model=Rule)
 async def update_trade_rule(rule_id: int, update: TradeRuleUpdate, current_user: dict = Depends(get_current_user)):
     rule_query = trade_rules.select().join(strategies, trade_rules.c.strategy_id == strategies.c.id).where(
         trade_rules.c.id == rule_id, strategies.c.user_email == current_user["email"]
@@ -339,7 +291,10 @@ async def update_trade_rule(rule_id: int, update: TradeRuleUpdate, current_user:
         raise HTTPException(status_code=404, detail="Rule not found or not owned by user")
     update_query = trade_rules.update().where(trade_rules.c.id == rule_id).values(followed=update.followed)
     await database.execute(update_query)
-    return {"id": rule_id, "followed": update.followed}
+    # Fetch the updated rule to return it fully
+    query = trade_rules.select().where(trade_rules.c.id == rule_id)
+    result = await database.fetch_one(query)
+    return dict(result)  # Convert Record to dict for Pydantic
 
 # ─── Analytics Endpoint with Rule Breakdown ─────────────────────────────────
 @app.get("/analytics")
@@ -347,7 +302,6 @@ async def analytics(start: Optional[date] = Query(None), end: Optional[date] = Q
     trades = load_trades(current_user["email"])
     filtered = filter_by_date(trades, start, end)
     basic_stats = compute_summary_stats(filtered)
-
     # Advanced rule analytics
     rule_analytics = {}
     strategy_query = strategies.select().where(strategies.c.user_email == current_user["email"])
@@ -383,7 +337,6 @@ async def analytics(start: Optional[date] = Query(None), end: Optional[date] = Q
                 "avg_r_followed": sum(t['r_multiple'] for t in followed_trades) / followed_count if followed_count > 0 else 0,
                 "avg_r_not_followed": sum(t['r_multiple'] for t in not_followed_trades) / len(not_followed_trades) if len(not_followed_trades) > 0 else 0
             }
-
     return {
         "basic_stats": basic_stats,
         "rule_analytics": rule_analytics
