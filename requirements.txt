@@ -153,3 +153,4 @@ tda-api==1.6.0
     # ThinkorSwim API access
 ib_insync
 asyncpg
+psycopg2
