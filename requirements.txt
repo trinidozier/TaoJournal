@@ -149,3 +149,7 @@ urllib3==2.5.0
     # via requests
 uvicorn==0.35.0
     # via -r requirements.in
+tda-api==1.6.0
+    # ThinkorSwim API access
+pandas==2.2.3
+    #Smart CSV Field Detection

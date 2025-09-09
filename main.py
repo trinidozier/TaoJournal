@@ -312,32 +312,29 @@ async def delete_trade(index: int,
 
 
 @app.post("/import_csv")
-async def import_csv(file: UploadFile = File(...),
-                     current_user: dict = Depends(get_current_user)):
+async def import_csv(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     content = await file.read()
-    rows    = parse_tradovate_csv(io.BytesIO(content))
-    trades  = load_trades(current_user["email"])
-
+    try:
+        rows = parse_smart_csv(io.BytesIO(content))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    trades = load_trades(current_user["email"])
     for payload in rows:
-        direction = "Long" if payload["sell_price"] > payload["buy_price"] else "Short"
-        pnl       = (payload["sell_price"] - payload["buy_price"]) if direction == "Long" else (payload["buy_price"] - payload["sell_price"])
-        risk      = abs(payload["buy_price"] - payload.get("stop", 0)) if payload.get("stop") else 0
-        r_mult    = round(pnl / risk, 2) if risk else 0.0
-
+        direction = payload.get("direction", "Long" if payload["sell_price"] > payload["buy_price"] else "Short")
+        pnl = (payload["sell_price"] - payload["buy_price"]) if direction == "Long" else (payload["buy_price"] - payload["sell_price"])
+        risk = abs(payload["buy_price"] - payload.get("stop", 0)) if payload.get("stop") else 0
+        r_mult = round(pnl / risk, 2) if risk else 0.0
         record = payload.copy()
         record.update({
-            "direction":  direction,
-            "pnl":        round(pnl, 2),
+            "direction": direction,
+            "pnl": round(pnl, 2),
             "r_multiple": r_mult,
             "image_path": "",
-            "trade_type": "Stock",  # Default for imported
-            "user":       current_user["email"]
+            "user": current_user["email"]
         })
         trades.append(record)
-
     save_trades(trades, current_user["email"])
     return {"imported": len(rows)}
-
 
 @app.get("/analytics")
 async def analytics(start: Optional[date] = Query(None),
