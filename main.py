@@ -9,7 +9,7 @@ import logging
 import io
 import base64
 from datetime import datetime, date, timedelta
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import (
     FastAPI, HTTPException, UploadFile, File, Query,
     status, Depends, Request
@@ -24,6 +24,7 @@ from tda.auth import easy_client
 from tda.client import Client
 from cryptography.fernet import Fernet
 from ib_insync import IB, Trade
+import pandas as pd  # For analytics
 
 from db import engine, metadata, database, users
 from auth import hash_password, verify_password
@@ -181,6 +182,18 @@ class IBKRConnect(BaseModel):
     api_token: str
     account_id: str
 
+class StrategyCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+
+class RuleCreate(BaseModel):
+    strategy_id: int
+    rule_type: str  # 'entry' or 'exit'
+    rule_text: str
+
+class TradeRuleUpdate(BaseModel):
+    followed: bool
+
 # ─── FastAPI App Initialization ─────────────────────────────────────────────
 app = FastAPI()
 
@@ -248,177 +261,94 @@ async def login(request: Request):
     token = create_access_token(data={"sub": user["email"]})
     return {"access_token": token, "token_type": "bearer"}
 
-# ─── IBKR Endpoints ─────────────────────────────────────────────────────────
-@app.post("/connect_ibkr")
-async def connect_ibkr(data: IBKRConnect, current_user: dict = Depends(get_current_user)):
-    try:
-        f = Fernet(ENCRYPTION_KEY.encode())
-        encrypted_token = f.encrypt(data.api_token.encode())
-        update_query = users.update().where(users.c.email == current_user["email"]).values(
-            broker_type="IBKR",
-            encrypted_access_token=encrypted_token,
-            account_id=data.account_id
-        )
-        await database.execute(update_query)
-        return {"message": "Interactive Brokers account connected"}
-    except Exception as e:
-        logger.error(f"IBKR connect error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Connect error: {str(e)}")
+# ─── Strategy and Rule Endpoints ────────────────────────────────────────────
+@app.post("/strategies", response_model=Dict)
+async def create_strategy(strategy: StrategyCreate, current_user: dict = Depends(get_current_user)):
+    insert = strategies.insert().values(
+        user_email=current_user["email"],
+        name=strategy.name,
+        description=strategy.description
+    )
+    strategy_id = await database.execute(insert)
+    return {"id": strategy_id, "name": strategy.name, "description": strategy.description}
 
-@app.post("/import_from_ibkr")
-async def import_from_ibkr(start_date: str, end_date: str, current_user: dict = Depends(get_current_user)):
-    query = users.select().where(users.c.email == current_user["email"])
-    db_user = await database.fetch_one(query)
-    if db_user["broker_type"] != "IBKR":
-        raise HTTPException(status_code=400, detail="IBKR not connected")
-    f = Fernet(ENCRYPTION_KEY.encode())
-    api_token = f.decrypt(db_user["encrypted_access_token"]).decode()
-    account_id = db_user["account_id"]
-    try:
-        ib = IB()
-        ib.connect(IBKR_HOST, int(IBKR_PORT), clientId=1)
-        trades = ib.reqAllOpenOrders()  # Or use reqExecutions for historical trades
-        ib.disconnect()
-        trades_data = []
-        for trade in trades:
-            if trade.orderStatus.status == "Filled":
-                trade_type = "Option" if trade.contract.secType == "OPT" else "Stock"
-                direction = "Long" if trade.order.action == "BUY" else "Short"
-                trade_data = {
-                    "instrument": trade.contract.symbol,
-                    "buy_timestamp": trade.orderStatus.fillTime or datetime.utcnow().isoformat(),
-                    "sell_timestamp": trade.orderStatus.fillTime or datetime.utcnow().isoformat(),
-                    "buy_price": trade.orderStatus.avgFillPrice,
-                    "sell_price": trade.orderStatus.avgFillPrice,
-                    "qty": int(trade.order.totalQuantity),
-                    "direction": direction,
-                    "trade_type": trade_type,
-                    "strategy": "",
-                    "confidence": 0,
-                    "target": 0.0,
-                    "stop": 0.0,
-                    "notes": "",
-                    "goals": "",
-                    "preparedness": "",
-                    "what_i_learned": "",
-                    "changes_needed": "",
-                    "user": current_user["email"]
+@app.get("/strategies", response_model=List[Dict])
+async def list_strategies(current_user: dict = Depends(get_current_user)):
+    query = strategies.select().where(strategies.c.user_email == current_user["email"])
+    return await database.fetch_all(query)
+
+@app.post("/rules", response_model=Dict)
+async def create_rule(rule: RuleCreate, current_user: dict = Depends(get_current_user)):
+    # Verify strategy belongs to user
+    strategy_query = strategies.select().where(strategies.c.id == rule.strategy_id, strategies.c.user_email == current_user["email"])
+    if not await database.fetch_one(strategy_query):
+        raise HTTPException(status_code=404, detail="Strategy not found or not owned by user")
+    insert = trade_rules.insert().values(
+        strategy_id=rule.strategy_id,
+        rule_type=rule.rule_type,
+        rule_text=rule.rule_text
+    )
+    rule_id = await database.execute(insert)
+    return {"id": rule_id, "strategy_id": rule.strategy_id, "rule_type": rule.rule_type, "rule_text": rule.rule_text}
+
+@app.get("/rules/{strategy_id}", response_model=List[Dict])
+async def list_rules(strategy_id: int, current_user: dict = Depends(get_current_user)):
+    strategy_query = strategies.select().where(strategies.c.id == strategy_id, strategies.c.user_email == current_user["email"])
+    if not await database.fetch_one(strategy_query):
+        raise HTTPException(status_code=404, detail="Strategy not found or not owned by user")
+    query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id)
+    return await database.fetch_all(query)
+
+@app.put("/trade_rules/{rule_id}", response_model=Dict)
+async def update_trade_rule(rule_id: int, update: TradeRuleUpdate, current_user: dict = Depends(get_current_user)):
+    # Verify rule belongs to user's strategy
+    rule_query = trade_rules.select().join(strategies, trade_rules.c.strategy_id == strategies.c.id).where(
+        trade_rules.c.id == rule_id, strategies.c.user_email == current_user["email"]
+    )
+    if not await database.fetch_one(rule_query):
+        raise HTTPException(status_code=404, detail="Rule not found or not owned by user")
+    update_query = trade_rules.update().where(trade_rules.c.id == rule_id).values(followed=update.followed)
+    await database.execute(update_query)
+    return {"id": rule_id, "followed": update.followed}
+
+# ─── Analytics Endpoint with Rule Breakdown ─────────────────────────────────
+@app.get("/analytics")
+async def analytics(start: Optional[date] = Query(None), end: Optional[date] = Query(None), current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    filtered = filter_by_date(trades, start, end)
+    basic_stats = compute_summary_stats(filtered)
+
+    # Advanced rule analytics
+    rule_analytics = {}
+    strategy_query = strategies.select().where(strategies.c.user_email == current_user["email"])
+    strategies_list = await database.fetch_all(strategy_query)
+    for strat in strategies_list:
+        strategy_id = strat["id"]
+        rule_query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id)
+        rules = await database.fetch_all(rule_query)
+        for rule in rules:
+            rule_id = rule["id"]
+            # Get trades associated with this strategy (assume strategy stored in trade notes or extend model)
+            # For now, assume trades have 'strategy' field; extend if needed
+            strategy_trades = [t for t in filtered if t.get('strategy') == strat['name']]
+            # Get adherence for this rule in trades (assume trade_rules has trade_id)
+            adherence_query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id, trade_rules.c.trade_id.in_([t['id'] for t in strategy_trades if 'id' in t]))
+            adherence = await database.fetch_all(adherence_query)
+            followed_count = len([a for a in adherence if a['followed']])
+            total_count = len(adherence)
+            if total_count > 0:
+                win_rate_followed = len([t for t in strategy_trades if t['pnl'] > 0 and t.get('followed_rule_id') == rule_id]) / followed_count if followed_count > 0 else 0
+                win_rate_not_followed = len([t for t in strategy_trades if t['pnl'] > 0 and t.get('followed_rule_id') != rule_id]) / (total_count - followed_count) if total_count > followed_count else 0
+                rule_analytics[f"Strategy {strat['name']} - Rule {rule['rule_text']}"] = {
+                    "followed_rate": followed_count / total_count,
+                    "win_rate_followed": win_rate_followed,
+                    "win_rate_not_followed": win_rate_not_followed
                 }
-                trades_data.append(trade_data)
-        trades = load_trades(current_user["email"])
-        trades.extend(trades_data)
-        save_trades(trades, current_user["email"])
-        return {"imported": len(trades_data)}
-    except Exception as e:
-        logger.error(f"IBKR import error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Import error: {str(e)}")
 
-# ─── Schwab OAuth Endpoints ─────────────────────────────────────────────────
-@app.get("/connect_schwab")
-async def connect_schwab(current_user: dict = Depends(get_current_user)):
-    redirect_uri = "https://taojournal-production.up.railway.app/schwab_callback"
-    try:
-        temp_token_path = os.path.join(tempfile.gettempdir(), f"schwab_{current_user['email']}.json")
-        auth_url = easy_client(
-            client_id=SCHWAB_CLIENT_ID,
-            redirect_uri=redirect_uri,
-            token_path=temp_token_path,
-            headless=False
-        ).auth_url
-        return {"redirect_url": auth_url}
-    except Exception as e:
-        logger.error(f"Schwab OAuth error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"OAuth error: {str(e)}")
-
-@app.get("/schwab_callback")
-async def schwab_callback(code: str, current_user: dict = Depends(get_current_user)):
-    redirect_uri = "https://taojournal-production.up.railway.app/schwab_callback"
-    temp_token_path = os.path.join(tempfile.gettempdir(), f"schwab_{current_user['email']}.json")
-    try:
-        client = easy_client(
-            client_id=SCHWAB_CLIENT_ID,
-            redirect_uri=redirect_uri,
-            token_path=temp_token_path,
-            code=code
-        )
-        token_data = client.get_token()
-        access_token = token_data["access_token"]
-        refresh_token = token_data["refresh_token"]
-        f = Fernet(ENCRYPTION_KEY.encode())
-        update_query = users.update().where(users.c.email == current_user["email"]).values(
-            broker_type="Schwab",
-            encrypted_access_token=f.encrypt(access_token.encode()),
-            encrypted_refresh_token=f.encrypt(refresh_token.encode())
-        )
-        await database.execute(update_query)
-        if os.path.exists(temp_token_path):
-            os.remove(temp_token_path)
-        return {"message": "Schwab account connected"}
-    except Exception as e:
-        logger.error(f"Schwab callback error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Callback error: {str(e)}")
-
-@app.post("/import_from_schwab")
-async def import_from_schwab(start_date: str, end_date: str, current_user: dict = Depends(get_current_user)):
-    query = users.select().where(users.c.email == current_user["email"])
-    db_user = await database.fetch_one(query)
-    if db_user["broker_type"] != "Schwab":
-        raise HTTPException(status_code=400, detail="Schwab not connected")
-    f = Fernet(ENCRYPTION_KEY.encode())
-    access_token = f.decrypt(db_user["encrypted_access_token"]).decode()
-    refresh_token = f.decrypt(db_user["encrypted_refresh_token"]).decode()
-    try:
-        client = Client(access_token=access_token)
-        token_data = client.get_token()
-        if token_data.get("access_token_expires_at") < time.time() + 300:
-            new_tokens = client.refresh_token(refresh_token)
-            new_access_token = new_tokens["access_token"]
-            new_refresh_token = new_tokens["refresh_token"]
-            update_query = users.update().where(users.c.email == current_user["email"]).values(
-                encrypted_access_token=f.encrypt(new_access_token.encode()),
-                encrypted_refresh_token=f.encrypt(new_refresh_token.encode())
-            )
-            await database.execute(update_query)
-            client = Client(access_token=new_access_token)
-        accounts = client.get_accounts(fields=["positions"]).json()
-        account_id = accounts[0]["securitiesAccount"]["accountId"]
-        transactions = client.get_transactions(
-            account_id=account_id,
-            start_date=start_date,
-            end_date=end_date,
-            transaction_type=Client.TransactionType.TRADE
-        ).json()
-        trades_data = []
-        for tx in transactions.get("transactions", []):
-            if tx["type"] == "TRADE":
-                trade = {
-                    "instrument": tx["symbol"],
-                    "buy_timestamp": tx["transactionDate"],
-                    "sell_timestamp": tx.get("settlementDate", tx["transactionDate"]),
-                    "buy_price": tx.get("price", 0.0),
-                    "sell_price": tx.get("price", 0.0),
-                    "qty": int(tx.get("quantity", 0)),
-                    "direction": "Long" if tx["activityType"] == "BUY" else "Short",
-                    "trade_type": "Option" if tx.get("instrumentType") == "OPTION" else "Stock",
-                    "strategy": "",
-                    "confidence": 0,
-                    "target": 0.0,
-                    "stop": 0.0,
-                    "notes": "",
-                    "goals": "",
-                    "preparedness": "",
-                    "what_i_learned": "",
-                    "changes_needed": "",
-                    "user": current_user["email"]
-                }
-                trades_data.append(trade)
-        trades = load_trades(current_user["email"])
-        trades.extend(trades_data)
-        save_trades(trades, current_user["email"])
-        return {"imported": len(trades_data)}
-    except Exception as e:
-        logger.error(f"Schwab import error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Import error: {str(e)}")
+    return {
+        "basic_stats": basic_stats,
+        "rule_analytics": rule_analytics
+    }
 
 # ─── Trade Endpoints ─────────────────────────────────────────────────
 @app.get("/trades", response_model=List[Trade])
@@ -500,7 +430,39 @@ async def import_csv(file: UploadFile = File(...), current_user: dict = Depends(
 async def analytics(start: Optional[date] = Query(None), end: Optional[date] = Query(None), current_user: dict = Depends(get_current_user)):
     trades = load_trades(current_user["email"])
     filtered = filter_by_date(trades, start, end)
-    return compute_summary_stats(filtered)
+    basic_stats = compute_summary_stats(filtered)
+
+    # Advanced rule analytics
+    rule_analytics = {}
+    strategy_query = strategies.select().where(strategies.c.user_email == current_user["email"])
+    strategies_list = await database.fetch_all(strategy_query)
+    for strat in strategies_list:
+        strategy_id = strat["id"]
+        rule_query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id)
+        rules = await database.fetch_all(rule_query)
+        for rule in rules:
+            rule_id = rule["id"]
+            # Get trades associated with this strategy (assume strategy stored in trade notes or extend model)
+            # For now, assume trades have 'strategy' field; extend if needed
+            strategy_trades = [t for t in filtered if t.get('strategy') == strat['name']]
+            # Get adherence for this rule in trades (assume trade_rules has trade_id)
+            adherence_query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id, trade_rules.c.trade_id.in_([t['id'] for t in strategy_trades if 'id' in t]))
+            adherence = await database.fetch_all(adherence_query)
+            followed_count = len([a for a in adherence if a['followed']])
+            total_count = len(adherence)
+            if total_count > 0:
+                win_rate_followed = len([t for t in strategy_trades if t['pnl'] > 0 and t.get('followed_rule_id') == rule_id]) / followed_count if followed_count > 0 else 0
+                win_rate_not_followed = len([t for t in strategy_trades if t['pnl'] > 0 and t.get('followed_rule_id') != rule_id]) / (total_count - followed_count) if total_count > followed_count else 0
+                rule_analytics[f"Strategy {strat['name']} - Rule {rule['rule_text']}"] = {
+                    "followed_rate": followed_count / total_count,
+                    "win_rate_followed": win_rate_followed,
+                    "win_rate_not_followed": win_rate_not_followed
+                }
+
+    return {
+        "basic_stats": basic_stats,
+        "rule_analytics": rule_analytics
+    }
 
 @app.get("/export/excel")
 async def export_excel(start: Optional[date] = Query(None), end: Optional[date] = Query(None), current_user: dict = Depends(get_current_user)):
