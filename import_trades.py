@@ -1,12 +1,12 @@
 import pandas as pd
+import numpy as np
 from io import BytesIO
 from datetime import datetime
 from typing import List, Dict
 from grouping import group_trades_by_entry_exit  # Your existing function for pairing buys/sells
 
 def parse_smart_csv(content: BytesIO) -> List[Dict]:
-    """
-    Smart CSV parser for broker trade history.
+    """Smart CSV parser for broker trade history.
     Auto-detects and maps columns from various brokers (Tradovate, Schwab, Alpaca, etc.).
     Cleans data (dates, prices with $, etc.) and returns list of trade dicts.
     """
@@ -28,12 +28,20 @@ def parse_smart_csv(content: BytesIO) -> List[Dict]:
             'qty': ['qty', 'quantity', 'size', 'contracts', 'shares', 'lots'],
             'pnl': ['pnl', 'profitloss', 'p&l', 'netpnl'],
             'direction': ['side', 'action', 'type', 'buy/sell'],  # 'BUY'/'SELL' or 'Long'/'Short'
-            'strategy': ['strategy', 'tag', 'notes'],  # Optional, fallback empty
+            'strategy': ['strategy', 'tag', 'notes'],
             'fees': ['fees', 'commission', 'cost'],
+            'confidence': ['confidence'],
+            'target': ['target'],
+            'stop': ['stop'],
+            'notes': ['notes'],
+            'goals': ['goals'],
+            'preparedness': ['preparedness'],
+            'what_i_learned': ['what_i_learned'],
+            'changes_needed': ['changes_needed'],
         }
 
         # Map columns
-        mapped_df = df.copy()
+        mapped_df = pd.DataFrame()
         for key, aliases in mapping.items():
             found_col = None
             for alias in aliases:
@@ -47,36 +55,36 @@ def parse_smart_csv(content: BytesIO) -> List[Dict]:
         # Clean data
         # Timestamps: Parse MM/DD/YYYY H:MM to ISO
         if 'buy_timestamp' in mapped_df.columns:
-            mapped_df['buy_timestamp'] = pd.to_datetime(mapped_df['buy_timestamp'], format='%m/%d/%Y %H:%M', errors='coerce').dt.isoformat()
+            mapped_df['buy_timestamp'] = pd.to_datetime(mapped_df['buy_timestamp'], format='%m/%d/%Y %H:%M', errors='coerce').apply(lambda x: x.isoformat() if pd.notnull(x) else datetime.now().isoformat())
         if 'sell_timestamp' in mapped_df.columns:
-            mapped_df['sell_timestamp'] = pd.to_datetime(mapped_df['sell_timestamp'], format='%m/%d/%Y %H:%M', errors='coerce').dt.isoformat()
+            mapped_df['sell_timestamp'] = pd.to_datetime(mapped_df['sell_timestamp'], format='%m/%d/%Y %H:%M', errors='coerce').apply(lambda x: x.isoformat() if pd.notnull(x) else datetime.now().isoformat())
 
         # Prices: Strip $ and convert to float
-        price_cols = ['buy_price', 'sell_price', 'pnl']
+        price_cols = ['buy_price', 'sell_price', 'pnl', 'target', 'stop']
         for col in price_cols:
             if col in mapped_df.columns:
-                mapped_df[col] = mapped_df[col].astype(str).str.replace('$', '').str.replace('(', '-').str.replace(')', '').astype(float)
+                mapped_df[col] = pd.to_numeric(mapped_df[col].astype(str).str.replace('$', '').str.replace('(', '-').str.replace(')', '').str.strip(), errors='coerce').fillna(0).astype(float)
 
-        # Qty to int
-        if 'qty' in mapped_df.columns:
-            mapped_df['qty'] = mapped_df['qty'].astype(int)
+        # Qty and confidence to int
+        int_cols = ['qty', 'confidence']
+        for col in int_cols:
+            if col in mapped_df.columns:
+                mapped_df[col] = pd.to_numeric(mapped_df[col].astype(str).str.strip(), errors='coerce').fillna(1 if col == 'qty' else 0).astype(int)
+
+        # String optional fields
+        str_cols = ['strategy', 'notes', 'goals', 'preparedness', 'what_i_learned', 'changes_needed']
+        for col in str_cols:
+            if col in mapped_df.columns:
+                mapped_df[col] = mapped_df[col].astype(str).fillna('')
 
         # Direction: Map BUY/SELL to Long/Short if present
         if 'direction' in mapped_df.columns:
             mapped_df['direction'] = mapped_df['direction'].str.upper().map({'BUY': 'Long', 'SELL': 'Short', 'LONG': 'Long', 'SHORT': 'Short'}).fillna('Long')
+        else:
+            mapped_df['direction'] = mapped_df.apply(lambda row: 'Long' if row.get('sell_price', 0) > row.get('buy_price', 0) else 'Short', axis=1)
 
-        # Fill missing optional fields
-        optional_fields = ['strategy', 'confidence', 'target', 'stop', 'notes', 'goals', 'preparedness', 'what_i_learned', 'changes_needed']
-        for field in optional_fields:
-            if field not in mapped_df.columns:
-                mapped_df[field] = ''
-
-        # If no side/direction, infer from buy/sell prices (assume Long if sell > buy)
-        if 'direction' not in mapped_df.columns:
-            mapped_df['direction'] = mapped_df.apply(lambda row: 'Long' if row['sell_price'] > row['buy_price'] else 'Short', axis=1)
-
-        # Group unpaired trades if needed (e.g., separate buy/sell rows)
-        if 'side' in mapped_df.columns or len(mapped_df) > 0 and 'buy_timestamp' not in mapped_df.columns:  # Fallback to grouping
+        # Group unpaired trades if needed
+        if 'direction' in mapping and 'direction' not in mapped_df.columns or len(mapped_df) > 0 and 'buy_timestamp' not in mapped_df.columns:  # Fallback to grouping
             raw_trades = mapped_df.to_dict('records')
             grouped = group_trades_by_entry_exit(raw_trades)  # Your existing function
         else:
