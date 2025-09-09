@@ -12,7 +12,7 @@ from sqlalchemy import (
     Boolean,
     create_engine,
     text,
-    inspect  # For table inspection in test
+    inspect
 )
 from dotenv import load_dotenv
 
@@ -21,18 +21,15 @@ load_dotenv()  # Load DATABASE_URL from .env for local development
 # Get DATABASE_URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# If not set, fall back to Railway public PostgreSQL URL for testing
+# Ensure DATABASE_URL is set
 if not DATABASE_URL:
-    DATABASE_URL = "postgresql+psycopg2://postgres:bvXCbVMYdQZVfJdsYgvRlOCWZaMrEvzC@gondola.proxy.rlwy.net:32273/railway"
+    raise ValueError("DATABASE_URL environment variable is not set. Please set it in your .env file for local development or in Railway's Variables tab for deployment.")
 
 # Ensure it's using psycopg2 driver (add +psycopg2 if missing)
 parsed_url = urlparse(DATABASE_URL)
 if parsed_url.scheme == 'postgresql':
     if '+psycopg2' not in DATABASE_URL:
         DATABASE_URL = DATABASE_URL.replace('postgresql://', 'postgresql+psycopg2://')
-
-# Debug: Print the DATABASE_URL to verify it's correct (remove this in production)
-print(f"Using DATABASE_URL: {DATABASE_URL}")
 
 # Parse to detect if local or remote
 parsed_url = urlparse(DATABASE_URL)
@@ -117,7 +114,7 @@ trade_rules = Table(
 # Sync engine for migrations and metadata.create_all
 engine = create_engine(
     DATABASE_URL,
-    echo=True,
+    echo=False,  # Quiet logs for production
     connect_args=connect_args
 )
 
