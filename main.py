@@ -23,10 +23,9 @@ from jose import jwt, JWTError
 from tda.auth import easy_client
 from tda.client import Client
 from cryptography.fernet import Fernet
-from ib_insync import IB, Trade
 import pandas as pd  # For analytics
 
-from db import engine, metadata, database, users
+from db import engine, metadata, database, users, strategies, trade_rules
 from auth import hash_password, verify_password
 from import_trades import parse_smart_csv
 from grouping import group_trades_by_entry_exit
@@ -91,7 +90,11 @@ def load_all_trades() -> List[dict]:
         return []
 
 def load_trades(user_email: str) -> List[dict]:
-    return [t for t in load_all_trades() if t.get("user") == user_email]
+    trades = [t for t in load_all_trades() if t.get("user") == user_email]
+    # Add trade_id for analytics
+    for idx, trade in enumerate(trades):
+        trade['id'] = idx
+    return trades
 
 def save_trades(user_trades: List[dict], user_email: str):
     all_trades = load_all_trades()
@@ -147,7 +150,8 @@ class TradeIn(BaseModel):
     qty: int
     direction: Optional[str] = None
     trade_type: Optional[str] = "Stock"
-    strategy: Optional[str] = ""
+    strategy_id: Optional[int] = None
+    rule_adherence: Optional[List[Dict]] = []  # List of {rule_id, followed}
     confidence: Optional[int] = 0
     target: Optional[float] = 0.0
     stop: Optional[float] = 0.0
@@ -163,6 +167,7 @@ class Trade(TradeIn):
     r_multiple: float
     image_path: Optional[str] = ""
     user: str
+    id: Optional[int] = None
 
 class UserCreate(BaseModel):
     first_name: str
@@ -279,7 +284,6 @@ async def list_strategies(current_user: dict = Depends(get_current_user)):
 
 @app.post("/rules", response_model=Dict)
 async def create_rule(rule: RuleCreate, current_user: dict = Depends(get_current_user)):
-    # Verify strategy belongs to user
     strategy_query = strategies.select().where(strategies.c.id == rule.strategy_id, strategies.c.user_email == current_user["email"])
     if not await database.fetch_one(strategy_query):
         raise HTTPException(status_code=404, detail="Strategy not found or not owned by user")
@@ -296,16 +300,42 @@ async def list_rules(strategy_id: int, current_user: dict = Depends(get_current_
     strategy_query = strategies.select().where(strategies.c.id == strategy_id, strategies.c.user_email == current_user["email"])
     if not await database.fetch_one(strategy_query):
         raise HTTPException(status_code=404, detail="Strategy not found or not owned by user")
-    query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id)
+    query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id, trade_rules.c.trade_id.is_(None))
     return await database.fetch_all(query)
+
+@app.get("/trade_rules/{trade_id}", response_model=List[Dict])
+async def list_trade_rules(trade_id: int, current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    if trade_id < 0 or trade_id >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    query = trade_rules.select().where(trade_rules.c.trade_id == trade_id)
+    return await database.fetch_all(query)
+
+@app.post("/trade_rules", response_model=Dict)
+async def create_trade_rule(rule: RuleCreate, trade_id: int, current_user: dict = Depends(get_current_user)):
+    strategy_query = strategies.select().where(strategies.c.id == rule.strategy_id, strategies.c.user_email == current_user["email"])
+    if not await database.fetch_one(strategy_query):
+        raise HTTPException(status_code=404, detail="Strategy not found or not owned by user")
+    trades = load_trades(current_user["email"])
+    if trade_id < 0 or trade_id >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    insert = trade_rules.insert().values(
+        strategy_id=rule.strategy_id,
+        rule_type=rule.rule_type,
+        rule_text=rule.rule_text,
+        trade_id=trade_id,
+        followed=False
+    )
+    rule_id = await database.execute(insert)
+    return {"id": rule_id, "strategy_id": rule.strategy_id, "rule_type": rule.rule_type, "rule_text": rule.rule_text, "trade_id": trade_id}
 
 @app.put("/trade_rules/{rule_id}", response_model=Dict)
 async def update_trade_rule(rule_id: int, update: TradeRuleUpdate, current_user: dict = Depends(get_current_user)):
-    # Verify rule belongs to user's strategy
     rule_query = trade_rules.select().join(strategies, trade_rules.c.strategy_id == strategies.c.id).where(
         trade_rules.c.id == rule_id, strategies.c.user_email == current_user["email"]
     )
-    if not await database.fetch_one(rule_query):
+    rule = await database.fetch_one(rule_query)
+    if not rule:
         raise HTTPException(status_code=404, detail="Rule not found or not owned by user")
     update_query = trade_rules.update().where(trade_rules.c.id == rule_id).values(followed=update.followed)
     await database.execute(update_query)
@@ -324,31 +354,147 @@ async def analytics(start: Optional[date] = Query(None), end: Optional[date] = Q
     strategies_list = await database.fetch_all(strategy_query)
     for strat in strategies_list:
         strategy_id = strat["id"]
-        rule_query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id)
+        rule_query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id, trade_rules.c.trade_id.is_not(None))
         rules = await database.fetch_all(rule_query)
+        strategy_trades = [t for t in filtered if t.get('strategy_id') == strategy_id]
+        if not strategy_trades:
+            continue
+        total_trades = len(strategy_trades)
+        wins = len([t for t in strategy_trades if t['pnl'] > 0])
+        win_rate = wins / total_trades if total_trades > 0 else 0
+        avg_r = sum(t['r_multiple'] for t in strategy_trades) / total_trades if total_trades > 0 else 0
+        rule_analytics[strat["name"]] = {
+            "total_trades": total_trades,
+            "win_rate": win_rate,
+            "avg_r_multiple": avg_r,
+            "rules": {}
+        }
         for rule in rules:
             rule_id = rule["id"]
-            # Get trades associated with this strategy (assume strategy stored in trade notes or extend model)
-            # For now, assume trades have 'strategy' field; extend if needed
-            strategy_trades = [t for t in filtered if t.get('strategy') == strat['name']]
-            # Get adherence for this rule in trades (assume trade_rules has trade_id)
-            adherence_query = trade_rules.select().where(trade_rules.c.strategy_id == strategy_id, trade_rules.c.trade_id.in_([t['id'] for t in strategy_trades if 'id' in t]))
-            adherence = await database.fetch_all(adherence_query)
-            followed_count = len([a for a in adherence if a['followed']])
-            total_count = len(adherence)
-            if total_count > 0:
-                win_rate_followed = len([t for t in strategy_trades if t['pnl'] > 0 and t.get('followed_rule_id') == rule_id]) / followed_count if followed_count > 0 else 0
-                win_rate_not_followed = len([t for t in strategy_trades if t['pnl'] > 0 and t.get('followed_rule_id') != rule_id]) / (total_count - followed_count) if total_count > followed_count else 0
-                rule_analytics[f"Strategy {strat['name']} - Rule {rule['rule_text']}"] = {
-                    "followed_rate": followed_count / total_count,
-                    "win_rate_followed": win_rate_followed,
-                    "win_rate_not_followed": win_rate_not_followed
-                }
+            followed_trades = [t for t in strategy_trades if any(r["id"] == rule_id and r["followed"] for r in await database.fetch_all(trade_rules.select().where(trade_rules.c.trade_id == t["id"])))]
+            not_followed_trades = [t for t in strategy_trades if t not in followed_trades]
+            followed_count = len(followed_trades)
+            followed_wins = len([t for t in followed_trades if t['pnl'] > 0])
+            not_followed_wins = len([t for t in not_followed_trades if t['pnl'] > 0])
+            rule_analytics[strat["name"]]["rules"][rule["rule_text"]] = {
+                "followed_rate": followed_count / total_trades if total_trades > 0 else 0,
+                "win_rate_followed": followed_wins / followed_count if followed_count > 0 else 0,
+                "win_rate_not_followed": not_followed_wins / len(not_followed_trades) if len(not_followed_trades) > 0 else 0,
+                "avg_r_followed": sum(t['r_multiple'] for t in followed_trades) / followed_count if followed_count > 0 else 0,
+                "avg_r_not_followed": sum(t['r_multiple'] for t in not_followed_trades) / len(not_followed_trades) if len(not_followed_trades) > 0 else 0
+            }
 
     return {
         "basic_stats": basic_stats,
         "rule_analytics": rule_analytics
     }
+
+# ─── Trade Endpoints ─────────────────────────────────────────────────
+@app.get("/trades", response_model=List[Trade])
+async def list_trades(current_user: dict = Depends(get_current_user)):
+    return load_trades(current_user["email"])
+
+@app.post("/trades", response_model=Trade)
+async def add_trade(payload: TradeIn, current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    direction = payload.direction or ("Long" if payload.sell_price > payload.buy_price else "Short")
+    pnl = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
+    risk = abs(payload.buy_price - payload.stop) if payload.stop else 0
+    r_mult = round(pnl / risk, 2) if risk else 0.0
+    record = payload.dict()
+    record.update({
+        "direction": direction,
+        "pnl": round(pnl, 2),
+        "r_multiple": r_mult,
+        "image_path": "",
+        "user": current_user["email"],
+        "id": len(trades)  # Assign trade_id
+    })
+    trades.append(record)
+    save_trades(trades, current_user["email"])
+    # Save rule adherence
+    for rule in payload.rule_adherence:
+        rule_query = trade_rules.select().where(trade_rules.c.id == rule["rule_id"], trade_rules.c.strategy_id == payload.strategy_id)
+        if await database.fetch_one(rule_query):
+            await database.execute(trade_rules.insert().values(
+                strategy_id=payload.strategy_id,
+                rule_type=(await database.fetch_one(rule_query))["rule_type"],
+                rule_text=(await database.fetch_one(rule_query))["rule_text"],
+                trade_id=len(trades) - 1,
+                followed=rule["followed"]
+            ))
+    return record
+
+@app.put("/trades/{index}", response_model=Trade)
+async def update_trade(index: int, payload: TradeIn, current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    if index < 0 or index >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    direction = payload.direction or ("Long" if payload.sell_price > payload.buy_price else "Short")
+    pnl = (payload.sell_price - payload.buy_price) if direction == "Long" else (payload.buy_price - payload.sell_price)
+    risk = abs(payload.buy_price - payload.stop) if payload.stop else 0
+    r_mult = round(pnl / risk, 2) if risk else 0.0
+    updated = payload.dict()
+    updated.update({
+        "direction": direction,
+        "pnl": round(pnl, 2),
+        "r_multiple": r_mult,
+        "id": index
+    })
+    trades[index].update(updated)
+    save_trades(trades, current_user["email"])
+    # Update rule adherence
+    for rule in payload.rule_adherence:
+        rule_query = trade_rules.select().where(trade_rules.c.id == rule["rule_id"], trade_rules.c.trade_id == index)
+        if await database.fetch_one(rule_query):
+            await database.execute(trade_rules.update().where(trade_rules.c.id == rule["rule_id"], trade_rules.c.trade_id == index).values(followed=rule["followed"]))
+        else:
+            strategy_rule = await database.fetch_one(trade_rules.select().where(trade_rules.c.id == rule["rule_id"], trade_rules.c.strategy_id == payload.strategy_id))
+            if strategy_rule:
+                await database.execute(trade_rules.insert().values(
+                    strategy_id=payload.strategy_id,
+                    rule_type=strategy_rule["rule_type"],
+                    rule_text=strategy_rule["rule_text"],
+                    trade_id=index,
+                    followed=rule["followed"]
+                ))
+    return updated
+
+@app.delete("/trades/{index}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_trade(index: int, current_user: dict = Depends(get_current_user)):
+    trades = load_trades(current_user["email"])
+    if index < 0 or index >= len(trades):
+        raise HTTPException(status_code=404, detail="Trade not found")
+    # Delete associated trade_rules
+    await database.execute(trade_rules.delete().where(trade_rules.c.trade_id == index))
+    trades.pop(index)
+    save_trades(trades, current_user["email"])
+
+@app.post("/import_csv")
+async def import_csv(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    content = await file.read()
+    try:
+        rows = parse_smart_csv(io.BytesIO(content))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    trades = load_trades(current_user["email"])
+    for payload in rows:
+        direction = payload.get("direction", "Long" if payload["sell_price"] > payload["buy_price"] else "Short")
+        pnl = (payload["sell_price"] - payload["buy_price"]) if direction == "Long" else (payload["buy_price"] - payload["sell_price"])
+        risk = abs(payload["buy_price"] - payload.get("stop", 0)) if payload.get("stop") else 0
+        r_mult = round(pnl / risk, 2) if risk else 0.0
+        record = payload.copy()
+        record.update({
+            "direction": direction,
+            "pnl": round(pnl, 2),
+            "r_multiple": r_mult,
+            "image_path": "",
+            "user": current_user["email"],
+            "id": len(trades)
+        })
+        trades.append(record)
+    save_trades(trades, current_user["email"])
+    return {"imported": len(rows), "message": f"Successfully imported {len(rows)} trades."}
 
 @app.get("/export/excel")
 async def export_excel(start: Optional[date] = Query(None), end: Optional[date] = Query(None), current_user: dict = Depends(get_current_user)):

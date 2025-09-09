@@ -8,7 +8,16 @@ function Dashboard() {
   const [error, setError] = useState('');
   const [showNewModal, setShowNewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showStrategyModal, setShowStrategyModal] = useState(false);
+  const [showRuleModal, setShowRuleModal] = useState(false);
   const [editIndex, setEditIndex] = useState(null);
+  const [importDates, setImportDates] = useState({ start_date: '', end_date: '' });
+  const [ibkrForm, setIBKRForm] = useState({ api_token: '', account_id: '' });
+  const [strategyForm, setStrategyForm] = useState({ name: '', description: '' });
+  const [ruleForm, setRuleForm] = useState({ strategy_id: '', rule_type: 'entry', rule_text: '' });
+  const [strategies, setStrategies] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [ruleAdherence, setRuleAdherence] = useState({});
   const [formData, setFormData] = useState({
     instrument: '',
     buy_timestamp: '',
@@ -16,7 +25,8 @@ function Dashboard() {
     buy_price: '',
     sell_price: '',
     qty: '',
-    strategy: '',
+    strategy_id: '',
+    rule_adherence: [],
     confidence: '',
     target: '',
     stop: '',
@@ -25,8 +35,8 @@ function Dashboard() {
     preparedness: '',
     what_i_learned: '',
     changes_needed: '',
-    direction: 'Long',  // Default to Long
-    trade_type: 'Stock',  // Default to Stock
+    direction: 'Long',
+    trade_type: 'Stock',
   });
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
@@ -38,6 +48,7 @@ function Dashboard() {
       return;
     }
     fetchTrades();
+    fetchStrategies();
   }, []);
 
   const fetchTrades = async () => {
@@ -70,20 +81,97 @@ function Dashboard() {
     }
   };
 
+  const fetchStrategies = async () => {
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/strategies', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setStrategies(await res.json());
+      }
+    } catch (err) {
+      console.error('Strategies fetch error:', err);
+    }
+  };
+
+  const fetchRules = async (strategy_id) => {
+    try {
+      const res = await fetch(`https://taojournal-production.up.railway.app/rules/${strategy_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const fetchedRules = await res.json();
+        setRules(fetchedRules);
+        setRuleAdherence(fetchedRules.reduce((acc, rule) => ({ ...acc, [rule.id]: false }), {}));
+      }
+    } catch (err) {
+      console.error('Rules fetch error:', err);
+    }
+  };
+
+  const fetchTradeRules = async (trade_id) => {
+    try {
+      const res = await fetch(`https://taojournal-production.up.railway.app/trade_rules/${trade_id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const tradeRules = await res.json();
+        setRuleAdherence(tradeRules.reduce((acc, rule) => ({ ...acc, [rule.id]: rule.followed }), {}));
+      }
+    } catch (err) {
+      console.error('Trade rules fetch error:', err);
+    }
+  };
+
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleStrategyChange = async (e) => {
+    const strategy_id = e.target.value;
+    setFormData({ ...formData, strategy_id });
+    if (strategy_id) {
+      await fetchRules(strategy_id);
+    } else {
+      setRules([]);
+      setRuleAdherence({});
+    }
+  };
+
+  const handleRuleAdherenceChange = (rule_id) => {
+    setRuleAdherence({ ...ruleAdherence, [rule_id]: !ruleAdherence[rule_id] });
+  };
+
+  const handleStrategyInputChange = (e) => {
+    setStrategyForm({ ...strategyForm, [e.target.name]: e.target.value });
+  };
+
+  const handleRuleInputChange = (e) => {
+    setRuleForm({ ...ruleForm, [e.target.name]: e.target.value });
+  };
+
+  const handleImportDateChange = (e) => {
+    setImportDates({ ...importDates, [e.target.name]: e.target.value });
+  };
+
+  const handleIBKRFormChange = (e) => {
+    setIBKRForm({ ...ibkrForm, [e.target.name]: e.target.value });
   };
 
   const handleAddTrade = async (e) => {
     e.preventDefault();
     try {
+      const rule_adherence = Object.keys(ruleAdherence).map(rule_id => ({
+        rule_id: parseInt(rule_id),
+        followed: ruleAdherence[rule_id]
+      }));
       const res = await fetch('https://taojournal-production.up.railway.app/trades', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, rule_adherence }),
       });
       if (res.ok) {
         setShowNewModal(false);
@@ -99,13 +187,17 @@ function Dashboard() {
   const handleEditTrade = async (e) => {
     e.preventDefault();
     try {
+      const rule_adherence = Object.keys(ruleAdherence).map(rule_id => ({
+        rule_id: parseInt(rule_id),
+        followed: ruleAdherence[rule_id]
+      }));
       const res = await fetch(`https://taojournal-production.up.railway.app/trades/${editIndex}`, {
         method: 'PUT',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({ ...formData, rule_adherence }),
       });
       if (res.ok) {
         setShowEditModal(false);
@@ -118,14 +210,66 @@ function Dashboard() {
     }
   };
 
-  const openEditModal = (index) => {
+  const handleCreateStrategy = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/strategies', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(strategyForm),
+      });
+      if (res.ok) {
+        setShowStrategyModal(false);
+        setStrategyForm({ name: '', description: '' });
+        fetchStrategies();
+      } else {
+        setError('Failed to create strategy.');
+      }
+    } catch (err) {
+      setError('Error creating strategy.');
+    }
+  };
+
+  const handleCreateRule = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/rules', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(ruleForm),
+      });
+      if (res.ok) {
+        setShowRuleModal(false);
+        setRuleForm({ strategy_id: '', rule_type: 'entry', rule_text: '' });
+        if (formData.strategy_id) {
+          fetchRules(formData.strategy_id);
+        }
+      } else {
+        setError('Failed to create rule.');
+      }
+    } catch (err) {
+      setError('Error creating rule.');
+    }
+  };
+
+  const openEditModal = async (index) => {
     const trade = trades[index];
     setEditIndex(index);
     setFormData({
       ...trade,
-      buy_timestamp: trade.buy_timestamp.slice(0, 16),  // Format for datetime-local
+      buy_timestamp: trade.buy_timestamp.slice(0, 16),
       sell_timestamp: trade.sell_timestamp.slice(0, 16),
     });
+    if (trade.strategy_id) {
+      await fetchRules(trade.strategy_id);
+      await fetchTradeRules(index);
+    }
     setShowEditModal(true);
   };
 
@@ -164,6 +308,70 @@ function Dashboard() {
       }
     } catch (err) {
       setError('Error importing CSV.');
+    }
+  };
+
+  const handleConnectIBKR = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/connect_ibkr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(ibkrForm),
+      });
+      if (res.ok) {
+        setShowIBKRModal(false);
+        setIBKRForm({ api_token: '', account_id: '' });
+      } else {
+        setError('Failed to connect IBKR.');
+      }
+    } catch (err) {
+      setError('Error connecting IBKR.');
+    }
+  };
+
+  const handleImportFromIBKR = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/import_from_ibkr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(importDates),
+      });
+      if (res.ok) {
+        fetchTrades();
+      } else {
+        setError('Failed to import trades from IBKR.');
+      }
+    } catch (err) {
+      setError('Error importing from IBKR.');
+    }
+  };
+
+  const handleImportFromSchwab = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/import_from_schwab', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(importDates),
+      });
+      if (res.ok) {
+        fetchTrades();
+      } else {
+        setError('Failed to import trades from Schwab.');
+      }
+    } catch (err) {
+      setError('Error importing from Schwab.');
     }
   };
 
@@ -236,6 +444,60 @@ function Dashboard() {
           <span className="mr-2">📥</span> Upload Broker CSV
           <input type="file" accept=".csv" onChange={handleUploadCSV} className="hidden" />
         </label>
+        <button onClick={() => setShowIBKRModal(true)} className="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-blue-600 transition flex items-center">
+          <span className="mr-2">🔗</span> Connect IBKR
+        </button>
+        <form onSubmit={handleImportFromIBKR} className="flex flex-wrap gap-4 items-center">
+          <input
+            type="date"
+            name="start_date"
+            value={importDates.start_date}
+            onChange={handleImportDateChange}
+            className="border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+            required
+          />
+          <input
+            type="date"
+            name="end_date"
+            value={importDates.end_date}
+            onChange={handleImportDateChange}
+            className="border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+            required
+          />
+          <button type="submit" className="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-blue-600 transition flex items-center">
+            <span className="mr-2">📥</span> Import from IBKR
+          </button>
+        </form>
+        <button onClick={() => window.location.href = 'https://taojournal-production.up.railway.app/connect_schwab'} className="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-blue-600 transition flex items-center">
+          <span className="mr-2">🔗</span> Connect Schwab
+        </button>
+        <form onSubmit={handleImportFromSchwab} className="flex flex-wrap gap-4 items-center">
+          <input
+            type="date"
+            name="start_date"
+            value={importDates.start_date}
+            onChange={handleImportDateChange}
+            className="border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+            required
+          />
+          <input
+            type="date"
+            name="end_date"
+            value={importDates.end_date}
+            onChange={handleImportDateChange}
+            className="border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+            required
+          />
+          <button type="submit" className="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-blue-600 transition flex items-center">
+            <span className="mr-2">📥</span> Import from Schwab
+          </button>
+        </form>
+        <button onClick={() => setShowStrategyModal(true)} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition flex items-center">
+          <span className="mr-2">📋</span> Add Strategy
+        </button>
+        <button onClick={() => setShowRuleModal(true)} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition flex items-center">
+          <span className="mr-2">📏</span> Add Rule
+        </button>
         <button onClick={() => handleExport('excel')} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition flex items-center">
           <span className="mr-2">📤</span> Export to Excel
         </button>
@@ -299,7 +561,7 @@ function Dashboard() {
                   <td className="px-6 py-4 whitespace-nowrap">{trade.qty}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.buy_price}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.sell_price}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">{trade.strategy}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{strategies.find(s => s.id === trade.strategy_id)?.name || ''}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.confidence}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.target}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.stop}</td>
@@ -353,10 +615,26 @@ function Dashboard() {
                 <option value="Long">Long</option>
                 <option value="Short">Short</option>
               </select>
+              <select name="strategy_id" value={formData.strategy_id} onChange={handleStrategyChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none">
+                <option value="">Select Strategy</option>
+                {strategies.map(strat => (
+                  <option key={strat.id} value={strat.id}>{strat.name}</option>
+                ))}
+              </select>
+              {rules.map(rule => (
+                <label key={rule.id} className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={ruleAdherence[rule.id] || false}
+                    onChange={() => handleRuleAdherenceChange(rule.id)}
+                    className="mr-2"
+                  />
+                  {rule.rule_type}: {rule.rule_text}
+                </label>
+              ))}
               <input name="buy_price" placeholder="Buy Price" value={formData.buy_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="sell_price" placeholder="Sell Price" value={formData.sell_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="qty" placeholder="Quantity" value={formData.qty} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" />
-              <input name="strategy" placeholder="Strategy (e.g., Breakout)" value={formData.strategy} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" />
               <input name="confidence" placeholder="Confidence (1-5)" value={formData.confidence} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" type="number" min="1" max="5" />
               <input name="target" placeholder="Target Price" value={formData.target} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" type="number" step="0.01" />
               <input name="stop" placeholder="Stop Loss Price" value={formData.stop} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" type="number" step="0.01" />
@@ -396,10 +674,26 @@ function Dashboard() {
                 <option value="Long">Long</option>
                 <option value="Short">Short</option>
               </select>
+              <select name="strategy_id" value={formData.strategy_id} onChange={handleStrategyChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none">
+                <option value="">Select Strategy</option>
+                {strategies.map(strat => (
+                  <option key={strat.id} value={strat.id}>{strat.name}</option>
+                ))}
+              </select>
+              {rules.map(rule => (
+                <label key={rule.id} className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={ruleAdherence[rule.id] || false}
+                    onChange={() => handleRuleAdherenceChange(rule.id)}
+                    className="mr-2"
+                  />
+                  {rule.rule_type}: {rule.rule_text}
+                </label>
+              ))}
               <input name="buy_price" placeholder="Buy Price" value={formData.buy_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="sell_price" placeholder="Sell Price" value={formData.sell_price} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" step="0.01" />
               <input name="qty" placeholder="Quantity" value={formData.qty} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" required type="number" />
-              <input name="strategy" placeholder="Strategy (e.g., Breakout)" value={formData.strategy} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" />
               <input name="confidence" placeholder="Confidence (1-5)" value={formData.confidence} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" type="number" min="1" max="5" />
               <input name="target" placeholder="Target Price" value={formData.target} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" type="number" step="0.01" />
               <input name="stop" placeholder="Stop Loss Price" value={formData.stop} onChange={handleInputChange} className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none" type="number" step="0.01" />
@@ -411,6 +705,82 @@ function Dashboard() {
               <div className="flex justify-end gap-4 mt-6">
                 <button type="button" onClick={() => setShowEditModal(false)} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600">Cancel</button>
                 <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Strategy Modal */}
+      {showStrategyModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-lg shadow-2xl border border-gray-200 w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">Add New Strategy</h2>
+            <form onSubmit={handleCreateStrategy} className="space-y-4">
+              <input
+                name="name"
+                placeholder="Strategy Name (e.g., Breakout)"
+                value={strategyForm.name}
+                onChange={handleStrategyInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+                required
+              />
+              <textarea
+                name="description"
+                placeholder="Description"
+                value={strategyForm.description}
+                onChange={handleStrategyInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+                rows="3"
+              />
+              <div className="flex justify-end gap-4 mt-6">
+                <button type="button" onClick={() => setShowStrategyModal(false)} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600">Cancel</button>
+                <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Add Strategy</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Rule Modal */}
+      {showRuleModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-lg shadow-2xl border border-gray-200 w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">Add New Rule</h2>
+            <form onSubmit={handleCreateRule} className="space-y-4">
+              <select
+                name="strategy_id"
+                value={ruleForm.strategy_id}
+                onChange={handleRuleInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+                required
+              >
+                <option value="">Select Strategy</option>
+                {strategies.map(strat => (
+                  <option key={strat.id} value={strat.id}>{strat.name}</option>
+                ))}
+              </select>
+              <select
+                name="rule_type"
+                value={ruleForm.rule_type}
+                onChange={handleRuleInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+              >
+                <option value="entry">Entry</option>
+                <option value="exit">Exit</option>
+              </select>
+              <textarea
+                name="rule_text"
+                placeholder="Rule Description (e.g., Volume > average)"
+                value={ruleForm.rule_text}
+                onChange={handleRuleInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+                rows="3"
+                required
+              />
+              <div className="flex justify-end gap-4 mt-6">
+                <button type="button" onClick={() => setShowRuleModal(false)} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600">Cancel</button>
+                <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Add Rule</button>
               </div>
             </form>
           </div>
