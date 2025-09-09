@@ -51,12 +51,9 @@ users = Table(
     Column("hashed_password", String, nullable=False),
     Column("created_at", DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
     Column("is_active", Boolean, nullable=False, server_default=text("TRUE")),
-    Column("broker_type", String, nullable=True),  # For Schwab/IBKR
-    Column("encrypted_access_token", String, nullable=True),
-    Column("encrypted_refresh_token", String, nullable=True),
 )
 
-# Strategies table for TradeBook
+# Strategies table
 strategies = Table(
     "strategies",
     metadata,
@@ -67,7 +64,7 @@ strategies = Table(
     Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
 )
 
-# Trade rules table for entry/exit rules
+# Trade rules table
 trade_rules = Table(
     "trade_rules",
     metadata,
