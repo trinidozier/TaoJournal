@@ -152,4 +152,4 @@ uvicorn==0.35.0
 tda-api==1.6.0
     # ThinkorSwim API access
 ib_insync
-
+asyncpg
