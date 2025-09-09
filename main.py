@@ -334,7 +334,7 @@ async def import_csv(file: UploadFile = File(...), current_user: dict = Depends(
         })
         trades.append(record)
     save_trades(trades, current_user["email"])
-    return {"imported": len(rows)}
+    return {"imported": len(rows), "message": f"Successfully imported {len(rows)} trades."}
 
 @app.get("/analytics")
 async def analytics(start: Optional[date] = Query(None),
