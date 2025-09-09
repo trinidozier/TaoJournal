@@ -51,26 +51,34 @@ users = Table(
     Column("hashed_password", String, nullable=False),
     Column("created_at", DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
     Column("is_active", Boolean, nullable=False, server_default=text("TRUE")),
+    Column("broker_type", String, nullable=True),  # For Schwab/IBKR
+    Column("encrypted_access_token", String, nullable=True),
+    Column("encrypted_refresh_token", String, nullable=True),
 )
 
-CREATE TABLE strategies (
-  id SERIAL PRIMARY KEY,
-  user_email VARCHAR(255) NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+# Strategies table for TradeBook
+strategies = Table(
+    "strategies",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_email", String, nullable=False),
+    Column("name", String(255), nullable=False),
+    Column("description", String, nullable=True),
+    Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
+)
 
-CREATE TABLE trade_rules (
-  id SERIAL PRIMARY KEY,
-  strategy_id INTEGER REFERENCES strategies(id) ON DELETE CASCADE,
-  rule_type VARCHAR(50) NOT NULL,  -- 'entry' or 'exit'
-  rule_text TEXT NOT NULL,
-  trade_id INTEGER,  -- For adherence per trade
-  followed BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
+# Trade rules table for entry/exit rules
+trade_rules = Table(
+    "trade_rules",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("strategy_id", Integer, nullable=False),
+    Column("rule_type", String(50), nullable=False),  # 'entry' or 'exit'
+    Column("rule_text", String, nullable=False),
+    Column("trade_id", Integer, nullable=True),  # Links to specific trade
+    Column("followed", Boolean, server_default=text("FALSE"), nullable=False),
+    Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
+)
 
 # Sync engine for migrations and metadata.create_all
 engine = create_engine(DATABASE_URL, echo=True)
