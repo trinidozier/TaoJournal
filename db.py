@@ -21,9 +21,9 @@ load_dotenv()  # Load DATABASE_URL from .env for local development
 # Get DATABASE_URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Ensure DATABASE_URL is set
+# If not set, fall back to Railway public PostgreSQL URL for testing
 if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set. Please set it in your .env file for local development or in Railway's Variables tab for deployment.")
+    DATABASE_URL = "postgresql+psycopg2://postgres:bvXCbVMYdQZVfJdsYgvRlOCWZaMrEvzC@gondola.proxy.rlwy.net:32273/railway"
 
 # Ensure it's using psycopg2 driver (add +psycopg2 if missing)
 parsed_url = urlparse(DATABASE_URL)
@@ -40,18 +40,15 @@ if is_postgres:
     if is_local:
         # Local PostgreSQL: Disable SSL (common for local setups)
         connect_args = {"sslmode": "disable"}
-        print("Detected local PostgreSQL: SSL disabled.")
     else:
         # Remote PostgreSQL (e.g., Railway): Require SSL
         connect_args = {"sslmode": "require"}
-        print("Detected remote PostgreSQL: SSL required.")
     # For the async database (databases library), use the same URL
     async_database_url = DATABASE_URL
 else:
     # Fallback to SQLite if needed (but we expect PostgreSQL)
     connect_args = {}
     async_database_url = "sqlite:///./tao.db"
-    print("Using SQLite fallback.")
 
 # Async database connection (used in app)
 database = Database(async_database_url)
@@ -111,10 +108,21 @@ trade_rules = Table(
     Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
 )
 
+# Brokers table (updated: no unique on user_email for multiple brokers per user)
+brokers = Table(
+    "brokers",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("user_email", String, nullable=False),  # Removed unique=True to allow multiple
+    Column("broker_type", String, nullable=False),  # 'ibkr' or 'schwab'
+    Column("creds_json", String, nullable=False),  # Encrypted JSON string of credentials
+    Column("last_import", DateTime, nullable=True),  # Timestamp of last successful import
+)
+
 # Sync engine for migrations and metadata.create_all
 engine = create_engine(
     DATABASE_URL,
-    echo=False,  # Quiet logs for production
+    echo=False,
     connect_args=connect_args
 )
 
