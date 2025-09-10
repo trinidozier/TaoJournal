@@ -527,7 +527,7 @@ async def analytics(start: Optional[date] = Query(None), end: Optional[date] = Q
                 "win_rate_followed": followed_wins / followed_count if followed_count > 0 else 0,
                 "win_rate_not_followed": not_followed_wins / len(not_followed_trades) if len(not_followed_trades) > 0 else 0,
                 "avg_r_followed": sum(t['r_multiple'] for t in followed_trades) / followed_count if followed_count > 0 else 0,
-                "avg_r_not_followed": sum(t['r_multiple'] for t in not_followed_trades) / len(not_followed_trades) > 0 else 0
+                "avg_r_not_followed": sum(t['r_multiple'] for t in not_followed_trades) / len(not_followed_trades) if len(not_followed_trades) > 0 else 0
             }
     return {
         "basic_stats": basic_stats,
