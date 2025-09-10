@@ -21,7 +21,7 @@ from tda.auth import easy_client
 from tda.client import Client
 from cryptography.fernet import Fernet
 import pandas as pd  # For analytics
-from db import engine, metadata, database, users, strategies, trade_rules, brokers  # Added brokers table
+from db import engine, metadata, database, users, strategies, trade_rules, brokers
 from auth import hash_password, verify_password
 from import_trades import parse_smart_csv
 from grouping import group_trades_by_entry_exit
@@ -43,7 +43,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 if not ENCRYPTION_KEY:
     ENCRYPTION_KEY = Fernet.generate_key().decode()
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
-IBKR_PORT = os.getenv("IBKR_PORT", "7497") # 7496 for live, 7497 for paper
+IBKR_PORT = os.getenv("IBKR_PORT", "7497")  # 7496 for live, 7497 for paper
 SAVE_FILE = "annotated_trades.json"
 BACKUP_DIR = "backups"
 MAX_BACKUPS = 10
@@ -527,7 +527,7 @@ async def analytics(start: Optional[date] = Query(None), end: Optional[date] = Q
                 "win_rate_followed": followed_wins / followed_count if followed_count > 0 else 0,
                 "win_rate_not_followed": not_followed_wins / len(not_followed_trades) if len(not_followed_trades) > 0 else 0,
                 "avg_r_followed": sum(t['r_multiple'] for t in followed_trades) / followed_count if followed_count > 0 else 0,
-                "avg_r_not_followed": sum(t['r_multiple'] for t in not_followed_trades) / len(not_followed_trades) if len(not_followed_trades) > 0 else 0
+                "avg_r_not_followed": (sum(t['r_multiple'] for t in not_followed_trades) / len(not_followed_trades)) if len(not_followed_trades) > 0 else 0
             }
     return {
         "basic_stats": basic_stats,
@@ -678,14 +678,14 @@ async def upload_trade_image(index: int, file: UploadFile = File(...), current_u
     save_trades(trades, current_user["email"])
     return {"image_path": img_path}
 
-# ─── Dashboard Endpoint (New: Serves Cleaned-Up HTML Dashboard) ─────────────
+# ─── Dashboard Endpoint (Serves Cleaned-Up HTML Dashboard) ─────────────
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(current_user: dict = Depends(get_current_user)):
     html_content = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Tao Trader Dashboard</title>
+    <title>StrategyForge Journal by Tao</title>
     <style>
         .modal {
             display: none;
@@ -720,7 +720,7 @@ async def dashboard(current_user: dict = Depends(get_current_user)):
     </style>
 </head>
 <body>
-    <h1>Tao Trader Dashboard</h1>
+    <h1>StrategyForge Journal by Tao</h1>
     <button id="connectBrokerBtn">Connect Broker</button>
     <button id="importBrokerBtn">Import from Broker</button>
     <button id="uploadCsvBtn">Upload Broker CSV</button>
