@@ -1,7 +1,36 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Component } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar } from 'recharts';
 import HeatMapGrid from 'react-heatmap-grid';
+
+// Error Boundary Component
+class ErrorBoundary extends Component {
+  state = { error: null, errorInfo: null };
+
+  componentDidCatch(error, errorInfo) {
+    this.setState({ error, errorInfo });
+    console.error('ErrorBoundary caught:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-6 text-center text-red-500">
+          <h2 className="text-xl font-bold mb-4">Something went wrong in Analytics</h2>
+          <p>{this.state.error.toString()}</p>
+          <p>Please check your dependencies (react, react-dom, recharts, react-heatmap-grid) or contact support.</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const Analytics = () => {
   const navigate = useNavigate();
@@ -340,362 +369,374 @@ const Analytics = () => {
   const heatmapYLabels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-100 to-blue-100 p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-4xl font-bold text-gray-800">Analytics Dashboard</h1>
-        <button onClick={() => navigate('/dashboard')} className="bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition">
-          Return to Dashboard
-        </button>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">Filters</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Start Date</label>
-            <input
-              type="date"
-              value={filters.startDate}
-              onChange={(e) => handleFilterChange('startDate', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">End Date</label>
-            <input
-              type="date"
-              value={filters.endDate}
-              onChange={(e) => handleFilterChange('endDate', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Start Time</label>
-            <input
-              type="time"
-              value={filters.startTime}
-              onChange={(e) => handleFilterChange('startTime', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">End Time</label>
-            <input
-              type="time"
-              value={filters.endTime}
-              onChange={(e) => handleFilterChange('endTime', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Strategy</label>
-            <select
-              value={filters.strategyId}
-              onChange={(e) => handleFilterChange('strategyId', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            >
-              <option value="">All Strategies</option>
-              {strategies.map(s => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Trade Type</label>
-            <select
-              value={filters.tradeType}
-              onChange={(e) => handleFilterChange('tradeType', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            >
-              <option value="All">All</option>
-              <option value="Stock">Stock</option>
-              <option value="Call">Call</option>
-              <option value="Put">Put</option>
-              <option value="Straddle">Straddle</option>
-              <option value="Covered Call">Covered Call</option>
-              <option value="Cash Secured Put">Cash Secured Put</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Direction</label>
-            <select
-              value={filters.direction}
-              onChange={(e) => handleFilterChange('direction', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            >
-              <option value="All">All</option>
-              <option value="Long">Long</option>
-              <option value="Short">Short</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Rule Adherence</label>
-            <select
-              value={filters.followed}
-              onChange={(e) => handleFilterChange('followed', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            >
-              <option value="All">All</option>
-              <option value="Followed">Followed</option>
-              <option value="Broken">Broken</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Confidence Min</label>
-            <input
-              type="number"
-              min="1"
-              max="5"
-              value={filters.confidenceMin}
-              onChange={(e) => handleFilterChange('confidenceMin', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Confidence Max</label>
-            <input
-              type="number"
-              min="1"
-              max="5"
-              value={filters.confidenceMax}
-              onChange={(e) => handleFilterChange('confidenceMax', e.target.value)}
-              className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
-            />
-          </div>
+    <ErrorBoundary>
+      <div className="min-h-screen bg-gradient-to-br from-gray-100 to-blue-100 p-6">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-4xl font-bold text-gray-800">Analytics Dashboard</h1>
+          <button onClick={() => navigate('/dashboard')} className="bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition">
+            Return to Dashboard
+          </button>
         </div>
-      </div>
 
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">Overall Summary</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="text-center p-4 bg-gray-50 rounded">
-            <h3 className="text-2xl font-bold">${totalPnl.toFixed(2)}</h3>
-            <p>Total PnL</p>
-          </div>
-          <div className="text-center p-4 bg-gray-50 rounded">
-            <h3 className="text-2xl font-bold">{winRate}%</h3>
-            <p>Win Rate</p>
-          </div>
-          <div className="text-center p-4 bg-gray-50 rounded">
-            <h3 className="text-2xl font-bold">{avgR}</h3>
-            <p>Avg R-Ratio</p>
-          </div>
-          <div className="text-center p-4 bg-gray-50 rounded">
-            <h3 className="text-2xl font-bold">{totalTrades}</h3>
-            <p>Total Trades</p>
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <h3>Long Trades: ${longPnl.toFixed(2)}</h3>
-          </div>
-          <div>
-            <h3>Short Trades: ${shortPnl.toFixed(2)}</h3>
-          </div>
-        </div>
-        <div className="mt-4">
-          <h3 className="text-lg font-bold">Risk Metrics</h3>
-          <p>Max Drawdown: ${maxDrawdown.toFixed(2)}</p>
-          <p>Sharpe Ratio: {sharpe.toFixed(2)}</p>
-          <p>Avg Risk/Reward: {avgRiskReward.toFixed(2)}</p>
-          <p>Max Consecutive Wins: {maxConsecutiveWins}</p>
-          <p>Max Consecutive Losses: {maxConsecutiveLosses}</p>
-        </div>
-        <div className="mt-4">
-          <h3 className="text-lg font-bold">Behavioral Insights</h3>
-          <p>{behavioral.overconfidence || 'No overconfidence detected'}</p>
-          <p>{behavioral.ruleBreakImpact}</p>
-        </div>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">Equity Curve</h2>
-        <LineChart width={600} height={300} data={equityCurve} className="mx-auto">
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Line type="monotone" dataKey="pnl" stroke="#8884d8" />
-        </LineChart>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">By Strategy</h2>
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Strategy</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trades</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PnL</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Win Rate</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg R</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Risk</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expectancy</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {Object.entries(byStrategy).map(([name, stats]) => (
-              <tr key={name}>
-                <td className="px-6 py-4 whitespace-nowrap">{name}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.trades}</td>
-                <td className="px-6 py-4 whitespace-nowrap">${stats.pnl.toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.winRate}%</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.avgR}</td>
-                <td className="px-6 py-4 whitespace-nowrap">${stats.avgRisk}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.expectancy}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">By Rule (Followed vs. Broken)</h2>
-        <p className="mb-4 text-sm text-gray-600">Aggregated across strategies; select a strategy filter for specifics.</p>
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rule Key</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trades</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PnL</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Win Rate</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg R</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Risk</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expectancy</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {Object.entries(byRule).map(([key, stats]) => (
-              <tr key={key}>
-                <td className="px-6 py-4 whitespace-nowrap">{key}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.trades}</td>
-                <td className="px-6 py-4 whitespace-nowrap">${stats.pnl.toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.winRate}%</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.avgR}</td>
-                <td className="px-6 py-4 whitespace-nowrap">${stats.avgRisk}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.expectancy}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">By Trade Type</h2>
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trades</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PnL</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Win Rate</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg R</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Risk</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expectancy</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {Object.entries(byType).map(([type, stats]) => (
-              <tr key={type}>
-                <td className="px-6 py-4 whitespace-nowrap">{type}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.trades}</td>
-                <td className="px-6 py-4 whitespace-nowrap">${stats.pnl.toFixed(2)}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.winRate}%</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.avgR}</td>
-                <td className="px-6 py-4 whitespace-nowrap">${stats.avgRisk}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{stats.expectancy}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">By Hour of Day</h2>
-        <BarChart
-          width={600}
-          height={300}
-          data={Object.entries(byHour).map(([h, s]) => ({ hour: h, pnl: s.pnl }))}
-          className="mx-auto"
-        >
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="hour" />
-          <YAxis />
-          <Tooltip />
-          <Bar dataKey="pnl" fill="#8884d8" />
-        </BarChart>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">By Day of Week</h2>
-        <BarChart
-          width={600}
-          height={300}
-          data={Object.entries(byDayOfWeek).map(([d, s]) => ({ day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][d], pnl: s.pnl }))}
-          className="mx-auto"
-        >
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="day" />
-          <YAxis />
-          <Tooltip />
-          <Bar dataKey="pnl" fill="#82ca9d" />
-        </BarChart>
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
-        <h2 className="text-xl font-bold mb-4">PnL Heatmap (Day vs Hour)</h2>
-        <p className="mb-4 text-sm text-gray-600">Hover over cells to see PnL values. Green indicates profits, red indicates losses.</p>
-        <HeatMapGrid
-          data={heatmapPnL}
-          xLabels={heatmapXLabels}
-          yLabels={heatmapYLabels}
-          cellStyle={(background, value, min, max, data, x, y) => ({
-            background: value > 0
-              ? `rgba(0, 255, 0, ${Math.min(Math.abs(value) / 1000, 1)})`
-              : value < 0
-              ? `rgba(255, 0, 0, ${Math.min(Math.abs(value) / 1000, 1)})`
-              : 'rgba(200, 200, 200, 0.5)',
-            fontSize: '12px',
-            color: '#000',
-            border: '1px solid #e5e7eb',
-            padding: '4px',
-          })}
-          cellRender={(x, y, value) => (
-            <div title={`Day: ${heatmapXLabels[x]}, Hour: ${heatmapYLabels[y]}, PnL: $${value.toFixed(2)}`}>
-              {value.toFixed(0)}
+        <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+          <h2 className="text-xl font-bold mb-4">Filters</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Start Date</label>
+              <input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => handleFilterChange('startDate', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              />
             </div>
-          )}
-          xLabelsStyle={() => ({
-            fontSize: '12px',
-            color: '#4b5563',
-            fontWeight: 'bold',
-          })}
-          yLabelsStyle={() => ({
-            fontSize: '12px',
-            color: '#4b5563',
-            fontWeight: 'bold',
-          })}
-          square
-        />
-      </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">End Date</label>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => handleFilterChange('endDate', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Start Time</label>
+              <input
+                type="time"
+                value={filters.startTime}
+                onChange={(e) => handleFilterChange('startTime', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">End Time</label>
+              <input
+                type="time"
+                value={filters.endTime}
+                onChange={(e) => handleFilterChange('endTime', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Strategy</label>
+              <select
+                value={filters.strategyId}
+                onChange={(e) => handleFilterChange('strategyId', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              >
+                <option value="">All Strategies</option>
+                {strategies.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Trade Type</label>
+              <select
+                value={filters.tradeType}
+                onChange={(e) => handleFilterChange('tradeType', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              >
+                <option value="All">All</option>
+                <option value="Stock">Stock</option>
+                <option value="Call">Call</option>
+                <option value="Put">Put</option>
+                <option value="Straddle">Straddle</option>
+                <option value="Covered Call">Covered Call</option>
+                <option value="Cash Secured Put">Cash Secured Put</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Direction</label>
+              <select
+                value={filters.direction}
+                onChange={(e) => handleFilterChange('direction', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              >
+                <option value="All">All</option>
+                <option value="Long">Long</option>
+                <option value="Short">Short</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Rule Adherence</label>
+              <select
+                value={filters.followed}
+                onChange={(e) => handleFilterChange('followed', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              >
+                <option value="All">All</option>
+                <option value="Followed">Followed</option>
+                <option value="Broken">Broken</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Confidence Min</label>
+              <input
+                type="number"
+                min="1"
+                max="5"
+                value={filters.confidenceMin}
+                onChange={(e) => handleFilterChange('confidenceMin', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Confidence Max</label>
+              <input
+                type="number"
+                min="1"
+                max="5"
+                value={filters.confidenceMax}
+                onChange={(e) => handleFilterChange('confidenceMax', e.target.value)}
+                className="w-full border p-2 rounded focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
 
-      <div className="flex gap-4">
-        <button
-          onClick={() => {/* TODO: Implement CSV export with /export endpoint */}}
-          className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition"
-        >
-          Export Summary (CSV)
-        </button>
-        <button
-          onClick={() => {/* TODO: Implement PDF export with /export endpoint */}}
-          className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition"
-        >
-          Export Report (PDF)
-        </button>
+        <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+          <h2 className="text-xl font-bold mb-4">Overall Summary</h2>
+          {totalTrades === 0 ? (
+            <p className="text-gray-600">No trades available. Add trades via the Dashboard to see analytics.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="text-center p-4 bg-gray-50 rounded">
+                  <h3 className="text-2xl font-bold">${totalPnl.toFixed(2)}</h3>
+                  <p>Total PnL</p>
+                </div>
+                <div className="text-center p-4 bg-gray-50 rounded">
+                  <h3 className="text-2xl font-bold">{winRate}%</h3>
+                  <p>Win Rate</p>
+                </div>
+                <div className="text-center p-4 bg-gray-50 rounded">
+                  <h3 className="text-2xl font-bold">{avgR}</h3>
+                  <p>Avg R-Ratio</p>
+                </div>
+                <div className="text-center p-4 bg-gray-50 rounded">
+                  <h3 className="text-2xl font-bold">{totalTrades}</h3>
+                  <p>Total Trades</p>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h3>Long Trades: ${longPnl.toFixed(2)}</h3>
+                </div>
+                <div>
+                  <h3>Short Trades: ${shortPnl.toFixed(2)}</h3>
+                </div>
+              </div>
+              <div className="mt-4">
+                <h3 className="text-lg font-bold">Risk Metrics</h3>
+                <p>Max Drawdown: ${maxDrawdown.toFixed(2)}</p>
+                <p>Sharpe Ratio: {sharpe.toFixed(2)}</p>
+                <p>Avg Risk/Reward: {avgRiskReward.toFixed(2)}</p>
+                <p>Max Consecutive Wins: {maxConsecutiveWins}</p>
+                <p>Max Consecutive Losses: {maxConsecutiveLosses}</p>
+              </div>
+              <div className="mt-4">
+                <h3 className="text-lg font-bold">Behavioral Insights</h3>
+                <p>{behavioral.overconfidence || 'No overconfidence detected'}</p>
+                <p>{behavioral.ruleBreakImpact}</p>
+              </div>
+            </>
+          )}
+        </div>
+
+        {totalTrades > 0 && (
+          <>
+            <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+              <h2 className="text-xl font-bold mb-4">Equity Curve</h2>
+              <LineChart width={600} height={300} data={equityCurve} className="mx-auto">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="pnl" stroke="#8884d8" />
+              </LineChart>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+              <h2 className="text-xl font-bold mb-4">By Strategy</h2>
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Strategy</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trades</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PnL</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Win Rate</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg R</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Risk</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expectancy</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Object.entries(byStrategy).map(([name, stats]) => (
+                    <tr key={name}>
+                      <td className="px-6 py-4 whitespace-nowrap">{name}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.trades}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">${stats.pnl.toFixed(2)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.winRate}%</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.avgR}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">${stats.avgRisk}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.expectancy}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+              <h2 className="text-xl font-bold mb-4">By Rule (Followed vs. Broken)</h2>
+              <p className="mb-4 text-sm text-gray-600">Aggregated across strategies; select a strategy filter for specifics.</p>
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rule Key</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trades</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PnL</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Win Rate</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg R</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Risk</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expectancy</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Object.entries(byRule).map(([key, stats]) => (
+                    <tr key={key}>
+                      <td className="px-6 py-4 whitespace-nowrap">{key}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.trades}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">${stats.pnl.toFixed(2)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.winRate}%</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.avgR}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">${stats.avgRisk}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.expectancy}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+              <h2 className="text-xl font-bold mb-4">By Trade Type</h2>
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trades</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PnL</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Win Rate</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg R</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Risk</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expectancy</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {Object.entries(byType).map(([type, stats]) => (
+                    <tr key={type}>
+                      <td className="px-6 py-4 whitespace-nowrap">{type}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.trades}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">${stats.pnl.toFixed(2)}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.winRate}%</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.avgR}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">${stats.avgRisk}</td>
+                      <td className="px-6 py-4 whitespace-nowrap">{stats.expectancy}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+              <h2 className="text-xl font-bold mb-4">By Hour of Day</h2>
+              <BarChart
+                width={600}
+                height={300}
+                data={Object.entries(byHour).map(([h, s]) => ({ hour: h, pnl: s.pnl }))}
+                className="mx-auto"
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="hour" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="pnl" fill="#8884d8" />
+              </BarChart>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+              <h2 className="text-xl font-bold mb-4">By Day of Week</h2>
+              <BarChart
+                width={600}
+                height={300}
+                data={Object.entries(byDayOfWeek).map(([d, s]) => ({ day: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][d], pnl: s.pnl }))}
+                className="mx-auto"
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="day" />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="pnl" fill="#82ca9d" />
+              </BarChart>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow-xl border border-gray-200 mb-6">
+              <h2 className="text-xl font-bold mb-4">PnL Heatmap (Day vs Hour)</h2>
+              <p className="mb-4 text-sm text-gray-600">Hover over cells to see PnL values. Green indicates profits, red indicates losses.</p>
+              <HeatMapGrid
+                data={heatmapPnL}
+                xLabels={heatmapXLabels}
+                yLabels={heatmapYLabels}
+                cellStyle={(background, value, min, max, data, x, y) => ({
+                  background: value > 0
+                    ? `rgba(0, 255, 0, ${Math.min(Math.abs(value) / 1000, 1)})`
+                    : value < 0
+                    ? `rgba(255, 0, 0, ${Math.min(Math.abs(value) / 1000, 1)})`
+                    : 'rgba(200, 200, 200, 0.5)',
+                  fontSize: '12px',
+                  color: '#000',
+                  border: '1px solid #e5e7eb',
+                  padding: '4px',
+                })}
+                cellRender={(x, y, value) => (
+                  <div title={`Day: ${heatmapXLabels[x]}, Hour: ${heatmapYLabels[y]}, PnL: $${value.toFixed(2)}`}>
+                    {value.toFixed(0)}
+                  </div>
+                )}
+                xLabelsStyle={() => ({
+                  fontSize: '12px',
+                  color: '#4b5563',
+                  fontWeight: 'bold',
+                })}
+                yLabelsStyle={() => ({
+                  fontSize: '12px',
+                  color: '#4b5563',
+                  fontWeight: 'bold',
+                })}
+                square
+              />
+            </div>
+          </>
+        )}
+
+        <div className="flex gap-4">
+          <button
+            onClick={() => {/* TODO: Implement CSV export with /export endpoint */}}
+            className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition"
+          >
+            Export Summary (CSV)
+          </button>
+          <button
+            onClick={() => {/* TODO: Implement PDF export with /export endpoint */}}
+            className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition"
+          >
+            Export Report (PDF)
+          </button>
+        </div>
       </div>
-    </div>
+    </ErrorBoundary>
   );
 };
 
