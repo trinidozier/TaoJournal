@@ -68,6 +68,7 @@ trades = Table(
     Column("pnl", Float, nullable=False),
     Column("r_multiple", Float, nullable=False),
     Column("timestamp", DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
+    Column("user", String, nullable=False)  # Added user column
 )
 
 # Users table — updated to match your expanded registration model
@@ -146,3 +147,5 @@ def test_connection():
 
 if __name__ == "__main__":
     test_connection()
+</xaiArtifact>
+
