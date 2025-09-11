@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import taoLogo from './assets/tao-logo.jpg';
+import taoLogo from './assets/tao-logo.jpg'; // Keep your logo; update to forgelogo.png if needed
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -10,13 +10,19 @@ function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setMessage(''); // Clear previous messages
+    setMessage('');
+
+    // Create form-data for OAuth2PasswordRequestForm
+    const formData = new FormData();
+    formData.append('username', email); // Backend expects 'username' for email
+    formData.append('password', password);
+
+    console.log('Attempting login with:', { email });
+
     try {
-      console.log('Attempting login with:', { email });
       const res = await fetch('https://taojournal-production.up.railway.app/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: formData, // Send as form-data
       });
       console.log('Login response status:', res.status);
       const text = await res.text();
@@ -33,9 +39,15 @@ function Login() {
         localStorage.setItem('token', data.access_token);
         setMessage('Login successful!');
         console.log('Navigating to dashboard');
-        setTimeout(() => navigate('/dashboard'), 1000); // Small delay to show message
+        setTimeout(() => navigate('/dashboard'), 1000);
       } else {
-        setMessage(data.detail || 'Login failed.');
+        // Handle error messages safely
+        const errorMsg = data.detail
+          ? Array.isArray(data.detail)
+            ? data.detail.map(err => err.msg || 'Unknown error').join(', ')
+            : data.detail
+          : 'Login failed. Please check your credentials.';
+        setMessage(errorMsg);
       }
     } catch (err) {
       console.error('Login error:', err);
@@ -47,9 +59,9 @@ function Login() {
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-blue-100 flex items-center justify-center">
       <div className="bg-white p-8 rounded-lg shadow-xl border border-gray-200 w-full max-w-md">
         <div className="flex justify-center mb-4">
-          <img src={taoLogo} alt="Tao Trader Logo" className="h-16 w-auto rounded" />
+          <img src={taoLogo} alt="StrategyForge Journal Logo" className="h-16 w-auto rounded" />
         </div>
-        <h1 className="text-2xl font-bold mb-2 text-center">Login to Tao Trader</h1>
+        <h1 className="text-2xl font-bold mb-2 text-center">Login to StrategyForge Journal</h1>
         <p className="text-sm text-gray-600 mb-6 text-center">
           Welcome back. Enter your credentials to access your trading journal.
           If you've forgotten your password, you can reset it below.
@@ -96,7 +108,7 @@ function Login() {
         </div>
         <p className="text-xs text-gray-500 mt-6 text-center">
           Your login is encrypted and secure.
-          Tao Trader never shares your data.
+          StrategyForge Journal never shares your data.
         </p>
       </div>
     </div>

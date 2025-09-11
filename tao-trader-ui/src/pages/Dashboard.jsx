@@ -57,18 +57,31 @@ function Dashboard() {
     setLoading(true);
     setError('');
     try {
+      console.log('Fetching trades with token:', token.substring(0, 10) + '...');
       const res = await fetch('https://taojournal-production.up.railway.app/trades', {
         headers: { Authorization: `Bearer ${token}` },
       });
+      console.log('Trades fetch response status:', res.status);
       const text = await res.text();
+      console.log('Trades fetch response body:', text);
       if (res.ok) {
-        const data = JSON.parse(text);
-        setTrades(Array.isArray(data) ? data : []);
+        try {
+          const data = JSON.parse(text);
+          setTrades(Array.isArray(data) ? data : []);
+        } catch (parseErr) {
+          console.error('JSON parse error:', parseErr);
+          setError('Invalid server response.');
+        }
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token'); // Clear invalid token
+        navigate('/login');
       } else {
-        setError('Failed to load trades.');
+        setError(`Failed to load trades: ${text || 'Unknown error'}`);
       }
     } catch (err) {
-      setError('Error fetching trades.');
+      console.error('Trades fetch error:', err);
+      setError('Error fetching trades. Please check your connection or login again.');
     } finally {
       setLoading(false);
     }
@@ -81,6 +94,10 @@ function Dashboard() {
       });
       if (res.ok) {
         setStrategies(await res.json());
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       }
     } catch (err) {
       console.error('Strategies fetch error:', err);
@@ -97,6 +114,10 @@ function Dashboard() {
         setRules(fetchedRules);
         // Default to true (followed) for new trades
         setRuleAdherence(fetchedRules.reduce((acc, rule) => ({ ...acc, [rule.id]: true }), {}));
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       }
     } catch (err) {
       console.error('Rules fetch error:', err);
@@ -111,6 +132,10 @@ function Dashboard() {
       if (res.ok) {
         const tradeRules = await res.json();
         setRuleAdherence(tradeRules.reduce((acc, rule) => ({ ...acc, [rule.id]: rule.followed }), {}));
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       }
     } catch (err) {
       console.error('Trade rules fetch error:', err);
@@ -212,10 +237,15 @@ function Dashboard() {
         setExitRules(['']);
         setEditStrategy(null);
         fetchStrategies();
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       } else {
         setError('Failed to save strategy.');
       }
     } catch (err) {
+      console.error('Error saving strategy:', err);
       setError('Error saving strategy.');
     }
   };
@@ -232,18 +262,31 @@ function Dashboard() {
       const rulesData = await res.json();
       setEntryRules(rulesData.filter(r => r.rule_type === 'entry').map(r => r.rule_text) || ['']);
       setExitRules(rulesData.filter(r => r.rule_type === 'exit').map(r => r.rule_text) || ['']);
+    } else if (res.status === 401) {
+      console.log('Unauthorized - redirecting to login');
+      localStorage.removeItem('token');
+      navigate('/login');
     }
   };
 
   const handleDeleteStrategy = async (id) => {
     if (window.confirm('Delete this strategy?')) {
       try {
-        await fetch(`https://taojournal-production.up.railway.app/strategies/${id}`, {
+        const res = await fetch(`https://taojournal-production.up.railway.app/strategies/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
         });
-        fetchStrategies();
+        if (res.ok) {
+          fetchStrategies();
+        } else if (res.status === 401) {
+          console.log('Unauthorized - redirecting to login');
+          localStorage.removeItem('token');
+          navigate('/login');
+        } else {
+          setError('Failed to delete strategy.');
+        }
       } catch (err) {
+        console.error('Error deleting strategy:', err);
         setError('Error deleting strategy.');
       }
     }
@@ -267,10 +310,15 @@ function Dashboard() {
       if (res.ok) {
         setShowNewModal(false);
         fetchTrades();
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       } else {
         setError('Failed to add trade.');
       }
     } catch (err) {
+      console.error('Error adding trade:', err);
       setError('Error adding trade.');
     }
   };
@@ -293,10 +341,15 @@ function Dashboard() {
       if (res.ok) {
         setShowEditModal(false);
         fetchTrades();
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       } else {
         setError('Failed to update trade.');
       }
     } catch (err) {
+      console.error('Error updating trade:', err);
       setError('Error updating trade.');
     }
   };
@@ -319,12 +372,21 @@ function Dashboard() {
   const handleDeleteTrade = async (id) => {
     if (window.confirm('Delete this trade?')) {
       try {
-        await fetch(`https://taojournal-production.up.railway.app/trades/${id}`, {
+        const res = await fetch(`https://taojournal-production.up.railway.app/trades/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
         });
-        fetchTrades();
+        if (res.ok) {
+          fetchTrades();
+        } else if (res.status === 401) {
+          console.log('Unauthorized - redirecting to login');
+          localStorage.removeItem('token');
+          navigate('/login');
+        } else {
+          setError('Failed to delete trade.');
+        }
       } catch (err) {
+        console.error('Error deleting trade:', err);
         setError('Error deleting trade.');
       }
     }
@@ -343,10 +405,15 @@ function Dashboard() {
       });
       if (res.ok) {
         fetchTrades();
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       } else {
         setError('Failed to import CSV.');
       }
     } catch (err) {
+      console.error('Error importing CSV:', err);
       setError('Error importing CSV.');
     }
   };
@@ -364,10 +431,15 @@ function Dashboard() {
       });
       if (res.ok) {
         fetchTrades();
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       } else {
         setError('Failed to upload image.');
       }
     } catch (err) {
+      console.error('Error uploading image:', err);
       setError('Error uploading image.');
     }
   };
@@ -388,10 +460,15 @@ function Dashboard() {
         a.href = url;
         a.download = `trades.${type}`;
         a.click();
+      } else if (res.status === 401) {
+        console.log('Unauthorized - redirecting to login');
+        localStorage.removeItem('token');
+        navigate('/login');
       } else {
         setError(`Failed to export ${type.toUpperCase()}.`);
       }
     } catch (err) {
+      console.error('Error exporting:', err);
       setError('Error exporting.');
     }
   };
