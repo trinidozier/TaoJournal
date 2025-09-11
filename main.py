@@ -21,7 +21,7 @@ from tda.auth import easy_client
 from tda.client import Client
 from cryptography.fernet import Fernet
 import pandas as pd
-from db import engine, metadata, database, users, strategies, trade_rules, brokers, trades  # Added trades import
+from db import engine, metadata, database, users, strategies, trade_rules, brokers, trades
 from auth import hash_password, verify_password
 from import_trades import parse_smart_csv
 from grouping import group_trades_by_entry_exit
@@ -788,29 +788,3 @@ def apply_analytics_filters(trades, filters):
     if filters['confidence_max']:
         filtered = [t for t in filtered if (t.get('confidence') or 0) <= filters['confidence_max']]
     return filtered
-
-def compute_equity_curve(trades):
-    sorted_trades = sorted(trades, key=lambda t: t['buy_timestamp'])
-    curve = []
-    cumulative_pnl = 0
-    for t in sorted_trades:
-        cumulative_pnl += t.get('pnl', 0)
-        curve.append({
-            'date': t['buy_timestamp'][:10],
-            'pnl': cumulative_pnl
-        })
-    return curve
-
-def compute_heatmap_hour(trades):
-    heatmap = defaultdict(float)
-    for t in trades:
-        hour = datetime.fromisoformat(t['buy_timestamp']).hour
-        heatmap[hour] += t.get('pnl', 0)
-    return dict(heatmap)
-
-def compute_heatmap_day(trades):
-    heatmap = defaultdict(float)
-    for t in trades:
-        day = datetime.fromisoformat(t['buy_timestamp']).weekday()
-        heatmap[day] += t.get('pnl', 0)
-    return dict(heatmap)
