@@ -39,7 +39,7 @@ load_dotenv()
 # ─── Config & Logging ────────────────────────────────────────────────────────
 SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 SCHWAB_CLIENT_ID = os.getenv("SCHWAB_CLIENT_ID")
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 if not ENCRYPTION_KEY:
@@ -116,7 +116,7 @@ def filter_by_date(trades: List[dict], start: Optional[date], end: Optional[date
         return trades
     out = []
     for t in trades:
-        ts = t.get("buy_timestamp") or t.get("BuyTimestamp")
+        ts = t.get("buy_timestamp") or t.get("timestamp") or t.get("BuyTimestamp")
         try:
             dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
             d = dt.date()
@@ -145,7 +145,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled error: {str(exc)}")
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": f"Internal server error: {str(exc)}"},
         headers={"Access-Control-Allow-Origin": request.headers.get("origin", "*")}
     )
 
@@ -171,12 +171,14 @@ async def shutdown():
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 def get_current_user_email(token: str = Depends(oauth2_scheme)) -> str:
+    logger.debug(f"Validating token: {token[:10]}...")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             logger.warning("Invalid token: No email in payload")
             raise HTTPException(status_code=401, detail="Invalid token")
+        logger.debug(f"Token validated for user: {email}")
         return email
     except JWTError as e:
         logger.error(f"JWT decode error: {e}")
@@ -236,17 +238,22 @@ async def get_trades(start_date: Optional[str] = None, end_date: Optional[str] =
         return filtered
     except Exception as e:
         logger.error(f"Error fetching trades for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/trades", response_model=Trade)
 async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_email)):
     logger.info(f"Creating trade for user: {email}")
     try:
+        # Validate required fields
+        if not all([trade.buy_price is not None, trade.sell_price is not None, trade.qty is not None]):
+            logger.error(f"Missing required fields in trade: {trade.dict()}")
+            raise HTTPException(status_code=400, detail="Missing required fields: buy_price, sell_price, qty")
+        
         direction = trade.direction or ("Long" if trade.sell_price > trade.buy_price else "Short")
         qty = trade.qty
         buy_price = trade.buy_price
         sell_price = trade.sell_price
-        fees = trade.fees if hasattr(trade, 'fees') else 0
+        fees = trade.fees or 0
         stop = trade.stop or buy_price * (0.9 if direction == "Long" else 1.1)
         r_multiple = 0 if not stop else (
             (sell_price - buy_price) / (buy_price - stop) if direction == "Long" else
@@ -257,146 +264,75 @@ async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_ema
         pnl = round((sell_price - buy_price) * multiplier - fees, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier - fees, 2)
 
         query = trades.insert().values(
-            instrument=trade.instrument,
-            buy_timestamp=trade.buy_timestamp,
-            sell_timestamp=trade.sell_timestamp,
-            buy_price=trade.buy_price,
-            sell_price=trade.sell_price,
-            qty=trade.qty,
+            buy_price=buy_price,
+            sell_price=sell_price,
+            stop=stop,
             direction=direction,
-            trade_type=trade.trade_type,
-            strategy_id=trade.strategy_id,
-            confidence=trade.confidence,
-            target=trade.target,
-            stop=trade.stop,
-            notes=trade.notes,
-            goals=trade.goals,
-            preparedness=trade.preparedness,
-            what_i_learned=trade.what_i_learned,
-            changes_needed=trade.changes_needed,
-            user=email,
-            r_multiple=r_multiple,
             pnl=pnl,
+            r_multiple=r_multiple,
+            timestamp=trade.buy_timestamp or datetime.utcnow().isoformat(),
+            user=email
         )
         trade_id = await database.execute(query)
-        for rule in trade.rule_adherence:
-            await database.execute(
-                trade_rules.insert().values(
-                    strategy_id=trade.strategy_id,
-                    rule_id=rule["rule_id"],
-                    trade_id=trade_id,
-                    followed=rule["followed"],
-                )
-            )
         logger.info(f"Trade created with ID {trade_id} for user: {email}")
-        return {**trade.dict(), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
+        return {
+            "id": trade_id,
+            "buy_price": buy_price,
+            "sell_price": sell_price,
+            "stop": stop,
+            "direction": direction,
+            "pnl": pnl,
+            "r_multiple": r_multiple,
+            "timestamp": trade.buy_timestamp or datetime.utcnow().isoformat(),
+            "user": email
+        }
     except Exception as e:
         logger.error(f"Error creating trade for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.put("/trades/{trade_id}", response_model=Trade)
-async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_current_user_email)):
-    logger.info(f"Updating trade {trade_id} for user: {email}")
+@app.post("/import_csv")
+async def import_csv(file: UploadFile = File(...), email: str = Depends(get_current_user_email)):
+    logger.info(f"Importing CSV for user: {email}")
     try:
-        direction = trade.direction or ("Long" if trade.sell_price > trade.buy_price else "Short")
-        qty = trade.qty
-        buy_price = trade.buy_price
-        sell_price = trade.sell_price
-        fees = trade.fees if hasattr(trade, 'fees') else 0
-        stop = trade.stop or buy_price * (0.9 if direction == "Long" else 1.1)
-        r_multiple = 0 if not stop else (
-            (sell_price - buy_price) / (buy_price - stop) if direction == "Long" else
-            (buy_price - sell_price) / (stop - buy_price)
-        )
-        r_multiple = round(r_multiple, 2)
-        multiplier = qty * 100 if trade.trade_type in ("Call", "Put", "Straddle", "Covered Call", "Cash Secured Put") else qty
-        pnl = round((sell_price - buy_price) * multiplier - fees, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier - fees, 2)
+        content = await file.read()
+        trades_data = parse_smart_csv(io.BytesIO(content))
+        inserted_trades = []
+        for trade in trades_data:
+            # Validate required fields
+            if not all([trade.get("buy_price") is not None, trade.get("sell_price") is not None, trade.get("qty") is not None]):
+                logger.warning(f"Skipping invalid trade: {trade}")
+                continue
+            direction = trade.get("direction", "Long")
+            qty = trade["qty"]
+            buy_price = trade["buy_price"]
+            sell_price = trade["sell_price"]
+            fees = trade.get("fees", 0)
+            stop = trade.get("stop", buy_price * (0.9 if direction == "Long" else 1.1))
+            r_multiple = 0 if not stop else (
+                (sell_price - buy_price) / (buy_price - stop) if direction == "Long" else
+                (buy_price - sell_price) / (stop - buy_price)
+            )
+            r_multiple = round(r_multiple, 2)
+            multiplier = qty * 100 if trade.get("trade_type", "Stock") in ("Call", "Put", "Straddle", "Covered Call", "Cash Secured Put") else qty
+            pnl = round((sell_price - buy_price) * multiplier - fees, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier - fees, 2)
 
-        query = trades.update().where(trades.c.id == trade_id, trades.c.user == email).values(
-            instrument=trade.instrument,
-            buy_timestamp=trade.buy_timestamp,
-            sell_timestamp=trade.sell_timestamp,
-            buy_price=trade.buy_price,
-            sell_price=trade.sell_price,
-            qty=trade.qty,
-            direction=direction,
-            trade_type=trade.trade_type,
-            strategy_id=trade.strategy_id,
-            confidence=trade.confidence,
-            target=trade.target,
-            stop=trade.stop,
-            notes=trade.notes,
-            goals=trade.goals,
-            preparedness=trade.preparedness,
-            what_i_learned=trade.what_i_learned,
-            changes_needed=trade.changes_needed,
-            r_multiple=r_multiple,
-            pnl=pnl,
-        )
-        await database.execute(query)
-        if trade.rule_adherence:
-            await database.execute(trade_rules.delete().where(trade_rules.c.trade_id == trade_id))
-            for rule in trade.rule_adherence:
-                await database.execute(
-                    trade_rules.insert().values(
-                        strategy_id=trade.strategy_id,
-                        rule_id=rule["rule_id"],
-                        trade_id=trade_id,
-                        followed=rule["followed"],
-                    )
-                )
-        logger.info(f"Trade {trade_id} updated for user: {email}")
-        return {**trade.dict(), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
+            query = trades.insert().values(
+                buy_price=buy_price,
+                sell_price=sell_price,
+                stop=stop,
+                direction=direction,
+                pnl=pnl,
+                r_multiple=r_multiple,
+                timestamp=trade.get("buy_timestamp", datetime.utcnow().isoformat()),
+                user=email
+            )
+            trade_id = await database.execute(query)
+            inserted_trades.append(trade_id)
+        logger.info(f"Imported {len(inserted_trades)} trades for user: {email}")
+        return {"message": f"Imported {len(inserted_trades)} trades"}
     except Exception as e:
-        logger.error(f"Error updating trade {trade_id} for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.delete("/trades/{trade_id}")
-async def delete_trade(trade_id: int, email: str = Depends(get_current_user_email)):
-    logger.info(f"Deleting trade {trade_id} for user: {email}")
-    try:
-        query = trades.delete().where(trades.c.id == trade_id, trades.c.user == email)
-        await database.execute(query)
-        await database.execute(trade_rules.delete().where(trade_rules.c.trade_id == trade_id))
-        logger.info(f"Trade {trade_id} deleted for user: {email}")
-        return {"message": "Trade deleted"}
-    except Exception as e:
-        logger.error(f"Error deleting trade {trade_id} for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.post("/trades/{trade_id}/image")
-async def upload_trade_image(trade_id: int, file: UploadFile = File(...), email: str = Depends(get_current_user_email)):
-    logger.info(f"Uploading image for trade {trade_id} by user: {email}")
-    try:
-        query = trades.select().where(trades.c.id == trade_id, trades.c.user == email)
-        trade = await database.fetch_one(query)
-        if not trade:
-            logger.warning(f"Trade {trade_id} not found for user: {email}")
-            raise HTTPException(status_code=404, detail="Trade not found")
-        img_path = os.path.join(IMAGE_FOLDER, f"{trade_id}_{file.filename}")
-        with open(img_path, "wb") as f:
-            f.write(await file.read())
-        await database.execute(trades.update().where(trades.c.id == trade_id).values(image_path=img_path))
-        logger.info(f"Image uploaded for trade {trade_id}")
-        return {"message": "Image uploaded"}
-    except Exception as e:
-        logger.error(f"Error uploading image for trade {trade_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.get("/trades/{trade_id}/image")
-async def get_trade_image(trade_id: int, token: str = Query(...)):
-    logger.info(f"Fetching image for trade {trade_id}")
-    try:
-        email = get_current_user_email(token)
-        query = trades.select().where(trades.c.id == trade_id, trades.c.user == email)
-        trade = await database.fetch_one(query)
-        if not trade or not trade["image_path"]:
-            logger.warning(f"Image not found for trade {trade_id}")
-            raise HTTPException(status_code=404, detail="Image not found")
-        return FileResponse(trade["image_path"])
-    except Exception as e:
-        logger.error(f"Error fetching image for trade {trade_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"Error importing CSV for {email}: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # ─── Strategies ──────────────────────────────────────────────────────────────
 @app.get("/strategies", response_model=List[Strategy])
@@ -409,7 +345,7 @@ async def get_strategies(email: str = Depends(get_current_user_email)):
         return result
     except Exception as e:
         logger.error(f"Error fetching strategies for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/strategies", response_model=Strategy)
 async def create_strategy(strategy: StrategyCreate, email: str = Depends(get_current_user_email)):
@@ -425,7 +361,7 @@ async def create_strategy(strategy: StrategyCreate, email: str = Depends(get_cur
         return {**strategy.dict(), "id": strategy_id, "user_email": email, "created_at": datetime.utcnow()}
     except Exception as e:
         logger.error(f"Error creating strategy for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.put("/strategies/{strategy_id}", response_model=Strategy)
 async def update_strategy(strategy_id: int, strategy: StrategyCreate, email: str = Depends(get_current_user_email)):
@@ -445,7 +381,7 @@ async def update_strategy(strategy_id: int, strategy: StrategyCreate, email: str
         return {**strategy.dict(), "id": strategy_id, "user_email": email, "created_at": existing["created_at"]}
     except Exception as e:
         logger.error(f"Error updating strategy {strategy_id} for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.delete("/strategies/{strategy_id}")
 async def delete_strategy(strategy_id: int, email: str = Depends(get_current_user_email)):
@@ -458,7 +394,7 @@ async def delete_strategy(strategy_id: int, email: str = Depends(get_current_use
         return {"message": "Strategy deleted"}
     except Exception as e:
         logger.error(f"Error deleting strategy {strategy_id} for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # ─── Rules ───────────────────────────────────────────────────────────────────
 @app.get("/rules/{strategy_id}", response_model=List[Rule])
@@ -475,7 +411,7 @@ async def get_rules(strategy_id: int, email: str = Depends(get_current_user_emai
         return result
     except Exception as e:
         logger.error(f"Error fetching rules for strategy {strategy_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/rules", response_model=Rule)
 async def create_rule(rule: RuleCreate, email: str = Depends(get_current_user_email)):
@@ -496,7 +432,7 @@ async def create_rule(rule: RuleCreate, email: str = Depends(get_current_user_em
         return {**rule.dict(), "id": rule_id, "trade_id": None, "followed": False, "created_at": datetime.utcnow()}
     except Exception as e:
         logger.error(f"Error creating rule for strategy {rule.strategy_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/trade_rules/{trade_id}", response_model=List[Rule])
 async def get_trade_rules(trade_id: int, email: str = Depends(get_current_user_email)):
@@ -512,7 +448,7 @@ async def get_trade_rules(trade_id: int, email: str = Depends(get_current_user_e
         return result
     except Exception as e:
         logger.error(f"Error fetching trade rules for trade {trade_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.put("/trade_rules/{trade_id}/{rule_id}", response_model=Rule)
 async def update_trade_rule(trade_id: int, rule_id: int, update: TradeRuleUpdate, email: str = Depends(get_current_user_email)):
@@ -533,7 +469,7 @@ async def update_trade_rule(trade_id: int, rule_id: int, update: TradeRuleUpdate
         return {**existing, "followed": update.followed}
     except Exception as e:
         logger.error(f"Error updating trade rule {rule_id} for trade {trade_id}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # ─── Brokers ─────────────────────────────────────────────────────────────────
 @app.post("/connect_schwab")
@@ -602,23 +538,7 @@ async def get_brokers(email: str = Depends(get_current_user_email)):
         return result
     except Exception as e:
         logger.error(f"Error fetching brokers for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.post("/import_csv")
-async def import_csv(file: UploadFile = File(...), email: str = Depends(get_current_user_email)):
-    logger.info(f"Importing CSV for user: {email}")
-    try:
-        content = await file.read()
-        trades_data = parse_smart_csv(io.BytesIO(content))
-        for trade in trades_data:
-            trade["user"] = email
-            query = trades.insert().values(**trade)
-            await database.execute(query)
-        logger.info(f"Imported {len(trades_data)} trades for user: {email}")
-        return {"message": f"Imported {len(trades_data)} trades"}
-    except Exception as e:
-        logger.error(f"Error importing CSV for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/import_from_schwab")
 async def import_from_schwab(email: str = Depends(get_current_user_email)):
@@ -640,15 +560,27 @@ async def import_from_schwab(email: str = Depends(get_current_user_email)):
             if not legs:
                 continue
             instr = legs[0].get("instrument", {})
+            buy_price = order.get("price", 0)
+            sell_price = order.get("price", 0)
+            qty = order.get("quantity", 0)
+            direction = "Long" if order.get("side") == "BUY" else "Short"
+            stop = buy_price * (0.9 if direction == "Long" else 1.1)
+            multiplier = qty * 100 if order.get("trade_type", "Stock") in ("Call", "Put", "Straddle", "Covered Call", "Cash Secured Put") else qty
+            pnl = round((sell_price - buy_price) * multiplier, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier, 2)
+            r_multiple = 0 if not stop else (
+                (sell_price - buy_price) / (buy_price - stop) if direction == "Long" else
+                (buy_price - sell_price) / (stop - buy_price)
+            )
+            r_multiple = round(r_multiple, 2)
             trade = {
-                "instrument": instr.get("symbol", ""),
-                "buy_timestamp": order.get("transactionDate"),
-                "sell_timestamp": order.get("transactionDate"),
-                "buy_price": order.get("price", 0),
-                "sell_price": order.get("price", 0),
-                "qty": order.get("quantity", 0),
-                "direction": "Long" if order.get("side") == "BUY" else "Short",
-                "user": email,
+                "buy_price": buy_price,
+                "sell_price": sell_price,
+                "stop": stop,
+                "direction": direction,
+                "pnl": pnl,
+                "r_multiple": r_multiple,
+                "timestamp": order.get("transactionDate"),
+                "user": email
             }
             query = trades.insert().values(**trade)
             await database.execute(query)
@@ -658,7 +590,7 @@ async def import_from_schwab(email: str = Depends(get_current_user_email)):
         return {"message": f"Imported {len(trades_data)} trades from Schwab"}
     except Exception as e:
         logger.error(f"Error importing from Schwab for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/import_from_ibkr")
 async def import_from_ibkr(email: str = Depends(get_current_user_email)):
@@ -674,7 +606,7 @@ async def import_from_ibkr(email: str = Depends(get_current_user_email)):
         return {"message": "IBKR import not implemented"}
     except Exception as e:
         logger.error(f"Error importing from IBKR for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/export/{export_type}")
 async def export_trades(export_type: str, email: str = Depends(get_current_user_email)):
@@ -696,7 +628,7 @@ async def export_trades(export_type: str, email: str = Depends(get_current_user_
             raise HTTPException(status_code=400, detail="Invalid export type")
     except Exception as e:
         logger.error(f"Error exporting trades for {email}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # ─── Analytics Endpoint ───────────────────────────────────────────────────────
 @app.get("/analytics")
@@ -717,33 +649,19 @@ async def get_analytics(
         query = select(trades).where(trades.c.user == user_email)
         db_trades = await database.fetch_all(query)
         trades_data = [dict(row) for row in db_trades]
+        logger.debug(f"Fetched {len(trades_data)} trades for analytics")
 
-        for trade in trades_data:
-            query = trade_rules.select().where(trade_rules.c.trade_id == trade["id"])
-            trade["rule_adherence"] = [dict(row) for row in await database.fetch_all(query)]
-
-        filtered_trades = apply_analytics_filters(trades_data, {
-            'start_date': start_date,
-            'end_date': end_date,
-            'strategy_id': strategy_id,
-            'trade_type': trade_type,
-            'direction': direction,
-            'followed': followed,
-            'confidence_min': confidence_min,
-            'confidence_max': confidence_max,
-        })
-
-        summary = compute_summary_stats(filtered_trades)
-        by_strategy = compute_by_strategy(filtered_trades)
-        by_rule = compute_by_rule(filtered_trades)
-        by_type = compute_by_trade_type(filtered_trades)
-        by_hour = compute_by_hour(filtered_trades)
-        by_day_of_week = compute_by_day_of_week(filtered_trades)
-        risk_metrics = compute_risk_metrics(filtered_trades)
-        behavioral_insights = compute_behavioral_insights(filtered_trades)
-        equity_curve = compute_equity_curve(filtered_trades)
-        heatmap_hour = compute_heatmap_hour(filtered_trades)
-        heatmap_day = compute_heatmap_day(filtered_trades)
+        summary = compute_summary_stats(trades_data)
+        by_strategy = compute_by_strategy(trades_data)
+        by_rule = compute_by_rule(trades_data)
+        by_type = compute_by_trade_type(trades_data)
+        by_hour = compute_by_hour(trades_data)
+        by_day_of_week = compute_by_day_of_week(trades_data)
+        risk_metrics = compute_risk_metrics(trades_data)
+        behavioral_insights = compute_behavioral_insights(trades_data)
+        equity_curve = compute_equity_curve(trades_data)
+        heatmap_hour = compute_heatmap_hour(trades_data)
+        heatmap_day = compute_heatmap_day(trades_data)
 
         logger.info(f"Analytics computed for user: {user_email}")
         return {
@@ -761,7 +679,7 @@ async def get_analytics(
         }
     except Exception as e:
         logger.error(f"Error computing analytics: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 def apply_analytics_filters(trades, filters):
     filtered = trades
