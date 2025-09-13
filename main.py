@@ -64,6 +64,18 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(mes
 logger = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
+# ─── FastAPI Setup ───────────────────────────────────────────────────────────
+app = FastAPI()
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Encryption helpers
 def encrypt_data(data: str) -> str:
     f = Fernet(ENCRYPTION_KEY.encode())
@@ -133,17 +145,6 @@ def filter_by_date(trades: List[dict], start: Optional[date], end: Optional[date
             out.append(t)
     return out
 
-# ─── FastAPI Setup ───────────────────────────────────────────────────────────
-app = FastAPI()
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ─── Database Connection ─────────────────────────────────────────────────────
 @app.on_event("startup")
