@@ -5,15 +5,16 @@ from datetime import datetime
 from typing import List, Dict
 from grouping import group_trades_by_entry_exit
 import logging
+import io
 
 logger = logging.getLogger(__name__)
 
-def parse_smart_csv(content: BytesIO) -> List[Dict]:
+def parse_smart_csv(content: str) -> List[Dict]:
     """Smart CSV parser for broker trade history.
     Auto-detects and maps columns, parsing timestamps to datetime objects.
     """
     try:
-        df = pd.read_csv(content)
+        df = pd.read_csv(io.StringIO(content))
         if df.empty:
             logger.info("CSV is empty, returning empty list.")
             return []
