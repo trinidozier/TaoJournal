@@ -13,7 +13,7 @@ from fastapi import (
     status, Depends, Request
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import matplotlib.pyplot as plt
 from jose import jwt, JWTError
@@ -417,31 +417,36 @@ async def update_trade_rule(trade_id: int, rule_id: int, update: TradeRuleUpdate
     return {**existing, "followed": update.followed}
 
 
-
 @app.post("/import_csv")
 async def import_csv(file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
-    user_email = get_current_user_email(token)
-    content = await file.read()
-    trades_parsed = parse_smart_csv(content.decode("utf-8"))
+    try:
+        user_email = get_current_user_email(token)
+        content = await file.read()
+        trades_parsed = parse_smart_csv(content.decode("utf-8"))
 
-    inserted = 0
-    for trade in trades_parsed:
-        trade["user"] = user_email
+        inserted = 0
+        for trade in trades_parsed:
+            trade["user"] = user_email
 
-        # Validate required fields
-        required = ["instrument", "buy_price", "buy_timestamp"]
-        if not all(field in trade and trade[field] for field in required):
-            logger.warning(f"Skipping malformed trade: {trade}")
-            continue
+            # Validate required fields
+            required = ["instrument", "buy_price", "buy_timestamp"]
+            if not all(field in trade and trade[field] for field in required):
+                logger.warning(f"Skipping malformed trade: {trade}")
+                continue
 
-        try:
-            query = trades.insert().values(**trade)
-            await database.execute(query)
-            inserted += 1
-        except Exception as e:
-            logger.error(f"Failed to insert trade: {trade} — {e}")
+            try:
+                query = trades.insert().values(**trade)
+                await database.execute(query)
+                inserted += 1
+            except Exception as e:
+                logger.error(f"Failed to insert trade: {trade} — {e}")
 
-    return {"inserted": inserted}
+        return {"inserted": inserted}
+
+    except Exception as e:
+        logger.error(f"CSV import failed: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 
 
