@@ -20,18 +20,27 @@ from jose import jwt, JWTError
 from tda.auth import easy_client
 from tda.client import Client
 from cryptography.fernet import Fernet
-import pandas as pd  # For analytics
-from db import engine, metadata, database, users, strategies, trade_rules, brokers
+import pandas as pd
+from db import engine, metadata, database, users, strategies, trade_rules, brokers, trades
 from auth import hash_password, verify_password
 from import_trades import parse_smart_csv
 from grouping import group_trades_by_entry_exit
 from export_tools import export_to_excel as export_excel_util, export_to_pdf as export_pdf_util
-from analytics import compute_summary_stats, compute_by_strategy, compute_by_rule, compute_by_trade_type, compute_by_hour, compute_by_day_of_week, compute_risk_metrics, compute_behavioral_insights
+from analytics import (
+    compute_summary_stats,
+    compute_by_strategy,
+    compute_by_rule,
+    compute_by_trade_type,
+    compute_by_hour,
+    compute_by_day_of_week,
+    compute_risk_metrics,
+    compute_behavioral_insights
+)
 from schemas import Strategy, StrategyCreate, Rule, RuleCreate, TradeIn, Trade, UserCreate, IBKRConnect, TradeRuleUpdate, Broker, BrokerCreate
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pytz import timezone
-from sqlalchemy import select  # Added for DB queries
+from sqlalchemy import select
 
 load_dotenv()
 
@@ -44,7 +53,7 @@ ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 if not ENCRYPTION_KEY:
     ENCRYPTION_KEY = Fernet.generate_key().decode()
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
-IBKR_PORT = os.getenv("IBKR_PORT", "7497")  # 7496 for live, 7497 for paper
+IBKR_PORT = os.getenv("IBKR_PORT", "7497")
 SAVE_FILE = "annotated_trades.json"
 BACKUP_DIR = "backups"
 MAX_BACKUPS = 10
@@ -96,11 +105,10 @@ def load_all_trades() -> List[dict]:
         return []
 
 def load_trades(user_email: str) -> List[dict]:
-    trades = [t for t in load_all_trades() if t.get("user") == user_email]
-    # Add trade_id for analytics
-    for idx, trade in enumerate(trades):
+    trades_list = [t for t in load_all_trades() if t.get("user") == user_email]
+    for idx, trade in enumerate(trades_list):
         trade['id'] = idx
-    return trades
+    return trades_list
 
 def save_trades(user_trades: List[dict], user_email: str):
     all_trades = load_all_trades()
@@ -546,6 +554,16 @@ async def get_analytics(
     db_trades = await database.fetch_all(query)
     trades = [dict(row) for row in db_trades]
 
+# Attach strategy_name to each trade
+    strategy_ids = {t["strategy_id"] for t in trades_list if t.get("strategy_id")}
+    strategy_map = {}
+    if strategy_ids:
+        strat_query = select(strategies).where(strategies.c.id.in_(strategy_ids))
+        strat_rows = await database.fetch_all(strat_query)
+        strategy_map = {row["id"]: row["name"] for row in strat_rows}
+    for t in trades_list:
+        t["strategy_name"] = strategy_map.get(t.get("strategy_id"), "No Strategy")
+    
     # Fetch rule adherence for each trade
     for trade in trades:
         query = trade_rules.select().where(trade_rules.c.trade_id == trade["id"])
