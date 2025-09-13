@@ -1,26 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar } from 'recharts';  // Removed invalid HeatMap
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar } from 'recharts';  # Removed invalid HeatMap
 
 const Analytics = () => {
   const navigate = useNavigate();
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [strategies, setStrategies] = useState([]);  // For dropdowns
+  const [strategies, setStrategies] = useState([]);  # For dropdowns
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
     startTime: '00:00',
     endTime: '23:59',
     strategyId: '',
-    tradeType: 'All',  // All, Long, Short, Stock, Call, Put, etc.
-    direction: 'All',  // All, Long, Short
-    followed: 'All',  // All, Followed, Broken (for rules)
+    tradeType: 'All',  # All, Long, Short, Stock, Call, Put, etc.
+    direction: 'All',  # All, Long, Short
+    followed: 'All',  # All, Followed, Broken (for rules)
     confidenceMin: 1,
     confidenceMax: 5,
   });
-  const [analyticsData, setAnalyticsData] = useState({});  // Computed metrics
+  const [analyticsData, setAnalyticsData] = useState({});  # Computed metrics
   const token = localStorage.getItem('token');
 
   useEffect(() => {
@@ -34,7 +34,7 @@ const Analytics = () => {
 
   const fetchTrades = async () => {
     try {
-      const res = await fetch('https://taojournal-production.up.railway.app/trades', {
+      const res = await fetch('https:#taojournal-production.up.railway.app/trades', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -52,7 +52,7 @@ const Analytics = () => {
 
   const fetchStrategies = async () => {
     try {
-      const res = await fetch('https://taojournal-production.up.railway.app/strategies', {
+      const res = await fetch('https:#taojournal-production.up.railway.app/strategies', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -68,32 +68,32 @@ const Analytics = () => {
       const buyDate = new Date(trade.buy_timestamp);
       const buyTime = buyDate.toTimeString().slice(0, 5);
 
-      // Date filter
+      # Date filter
       const startDate = filters.startDate ? new Date(filters.startDate) : null;
       const endDate = filters.endDate ? new Date(filters.endDate) : null;
       if (startDate && buyDate < startDate) return false;
       if (endDate && buyDate > endDate) return false;
 
-      // Time filter
+      # Time filter
       if (buyTime < filters.startTime || buyTime > filters.endTime) return false;
 
-      // Strategy filter
+      # Strategy filter
       if (filters.strategyId && trade.strategy_id !== parseInt(filters.strategyId)) return false;
 
-      // Trade type filter
+      # Trade type filter
       if (filters.tradeType !== 'All' && trade.trade_type !== filters.tradeType) return false;
 
-      // Direction filter
+      # Direction filter
       if (filters.direction !== 'All' && trade.direction !== filters.direction) return false;
 
-      // Confidence filter
+      # Confidence filter
       const confidence = parseInt(trade.confidence) || 0;
       if (confidence < filters.confidenceMin || confidence > filters.confidenceMax) return false;
 
-      // Rule followed filter (simplified; for specific rule, we'd need rule_id param)
+      # Rule followed filter (simplified; for specific rule, we'd need rule_id param)
       if (filters.followed !== 'All') {
         const avgFollowed = trade.rule_adherence ? trade.rule_adherence.filter(r => r.followed).length / trade.rule_adherence.length : 1;
-        if (filters.followed === 'Followed' && avgFollowed < 0.8) return false;  // 80% threshold
+        if (filters.followed === 'Followed' && avgFollowed < 0.8) return false;  # 80% threshold
         if (filters.followed === 'Broken' && avgFollowed > 0.8) return false;
       }
 
@@ -102,7 +102,20 @@ const Analytics = () => {
   };
 
   const computeAnalytics = (filteredTrades) => {
-    if (filteredTrades.length === 0) return { totalTrades: 0, totalPnl: 0, winRate: 0, avgR: 0 };
+    if (filteredTrades.length === 0) return {
+      totalTrades: 0,
+      totalPnl: 0,
+      winRate: 0,
+      avgR: 0,
+      longPnl: 0,
+      shortPnl: 0,
+      byStrategy: {},
+      byRule: {},
+      byType: {},
+      byHour: {},
+      maxDrawdown: 0,
+      sharpe: 0,
+    };
 
     const totalTrades = filteredTrades.length;
     const totalPnl = filteredTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
@@ -110,13 +123,13 @@ const Analytics = () => {
     const winRate = ((wins / totalTrades) * 100).toFixed(1);
     const avgR = (filteredTrades.reduce((sum, t) => sum + (t.r_multiple || 0), 0) / totalTrades).toFixed(2);
 
-    // Long/Short
+    # Long/Short
     const longs = filteredTrades.filter(t => t.direction === 'Long');
     const shorts = filteredTrades.filter(t => t.direction === 'Short');
     const longPnl = longs.reduce((sum, t) => sum + (t.pnl || 0), 0);
     const shortPnl = shorts.reduce((sum, t) => sum + (t.pnl || 0), 0);
 
-    // By Strategy
+    # By Strategy
     const byStrategy = {};
     filteredTrades.forEach(t => {
       const stratName = strategies.find(s => s.id === t.strategy_id)?.name || 'No Strategy';
@@ -126,7 +139,7 @@ const Analytics = () => {
       if ((t.r_multiple || 0) > 0) byStrategy[stratName].wins++;
     });
 
-    // By Rule (simplified; group by rule_type + followed)
+    # By Rule (simplified; group by rule_type + followed)
     const byRule = {};
     filteredTrades.forEach(t => {
       t.rule_adherence?.forEach(ra => {
@@ -138,7 +151,7 @@ const Analytics = () => {
       });
     });
 
-    // By Trade Type
+    # By Trade Type
     const byType = {};
     filteredTrades.forEach(t => {
       const type = t.trade_type || 'Other';
@@ -148,7 +161,7 @@ const Analytics = () => {
       if ((t.r_multiple || 0) > 0) byType[type].wins++;
     });
 
-    // Time Breakdown (Hour of Day)
+    # Time Breakdown (Hour of Day)
     const byHour = {};
     filteredTrades.forEach(t => {
       const hour = new Date(t.buy_timestamp).getHours();
@@ -158,13 +171,13 @@ const Analytics = () => {
       if ((t.r_multiple || 0) > 0) byHour[hour].wins++;
     });
 
-    // Risk Metrics (simplified)
+    # Risk Metrics (simplified)
     const sortedPnL = filteredTrades.map(t => t.pnl || 0).sort((a, b) => a - b);
     const maxDrawdown = Math.min(...sortedPnL.slice(0, -1).reduce((drawdown, pnl, i) => {
       const peak = Math.max(...sortedPnL.slice(0, i + 1));
       return Math.min(drawdown, pnl - peak);
     }, 0), 0);
-    const sharpe = totalPnl / Math.sqrt(totalTrades) || 0;  // Simplified Sharpe (assume risk-free=0, std dev approx)
+    const sharpe = totalPnl / Math.sqrt(totalTrades) || 0;  # Simplified Sharpe (assume risk-free=0, std dev approx)
 
     return {
       totalTrades,
@@ -194,7 +207,7 @@ const Analytics = () => {
   if (loading) return <div className="p-6 text-center">Loading analytics...</div>;
   if (error) return <div className="p-6 text-center text-red-500">{error}</div>;
 
-  const { totalTrades, totalPnl, winRate, avgR, longPnl, shortPnl, byStrategy, byRule, byType, byHour, maxDrawdown, sharpe } = analyticsData;
+  const { totalTrades = 0, totalPnl = 0, winRate = 0, avgR = 0, longPnl = 0, shortPnl = 0, byStrategy = {}, byRule = {}, byType = {}, byHour = {}, maxDrawdown = 0, sharpe = 0 } = analyticsData;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-blue-100 p-6">
