@@ -8,16 +8,14 @@ function Dashboard() {
   const [error, setError] = useState('');
   const [showNewModal, setShowNewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showPlaybookModal, setShowPlaybookModal] = useState(false);
-  const [showStrategyEditModal, setShowStrategyEditModal] = useState(false);
-  const [editStrategy, setEditStrategy] = useState(null); // For editing existing strategy (null for new)
-  const [strategyForm, setStrategyForm] = useState({ name: '', description: '' });
-  const [entryRules, setEntryRules] = useState(['']); // Dynamic entry rules (start with one empty)
-  const [exitRules, setExitRules] = useState(['']); // Dynamic exit rules (start with one empty)
-  const [strategies, setStrategies] = useState([]);
+  const [showStrategyModal, setShowStrategyModal] = useState(false);
+  const [showRuleModal, setShowRuleModal] = useState(false);
   const [editIndex, setEditIndex] = useState(null);
   const [importDates, setImportDates] = useState({ start_date: '', end_date: '' });
   const [ibkrForm, setIBKRForm] = useState({ api_token: '', account_id: '' });
+  const [strategyForm, setStrategyForm] = useState({ name: '', description: '' });
+  const [ruleForm, setRuleForm] = useState({ strategy_id: '', rule_type: 'entry', rule_text: '' });
+  const [strategies, setStrategies] = useState([]);
   const [rules, setRules] = useState([]);
   const [ruleAdherence, setRuleAdherence] = useState({});
   const [formData, setFormData] = useState({
@@ -72,12 +70,8 @@ function Dashboard() {
           console.error('JSON parse error:', parseErr);
           setError('Invalid server response.');
         }
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token'); // Clear invalid token
-        navigate('/login');
       } else {
-        setError(`Failed to load trades: ${text || 'Unknown error'}`);
+        setError('Failed to load trades.');
       }
     } catch (err) {
       console.error('Trades fetch error:', err);
@@ -94,10 +88,6 @@ function Dashboard() {
       });
       if (res.ok) {
         setStrategies(await res.json());
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
       }
     } catch (err) {
       console.error('Strategies fetch error:', err);
@@ -112,12 +102,7 @@ function Dashboard() {
       if (res.ok) {
         const fetchedRules = await res.json();
         setRules(fetchedRules);
-        // Default to true (followed) for new trades
-        setRuleAdherence(fetchedRules.reduce((acc, rule) => ({ ...acc, [rule.id]: true }), {}));
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
+        setRuleAdherence(fetchedRules.reduce((acc, rule) => ({ ...acc, [rule.id]: false }), {}));
       }
     } catch (err) {
       console.error('Rules fetch error:', err);
@@ -132,10 +117,6 @@ function Dashboard() {
       if (res.ok) {
         const tradeRules = await res.json();
         setRuleAdherence(tradeRules.reduce((acc, rule) => ({ ...acc, [rule.id]: rule.followed }), {}));
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
       }
     } catch (err) {
       console.error('Trade rules fetch error:', err);
@@ -165,131 +146,16 @@ function Dashboard() {
     setStrategyForm({ ...strategyForm, [e.target.name]: e.target.value });
   };
 
-  const handleEntryRuleChange = (index, value) => {
-    const newRules = [...entryRules];
-    newRules[index] = value;
-    setEntryRules(newRules);
+  const handleRuleInputChange = (e) => {
+    setRuleForm({ ...ruleForm, [e.target.name]: e.target.value });
   };
 
-  const addEntryRule = () => {
-    setEntryRules([...entryRules, '']);
+  const handleImportDateChange = (e) => {
+    setImportDates({ ...importDates, [e.target.name]: e.target.value });
   };
 
-  const removeEntryRule = (index) => {
-    const newRules = entryRules.filter((_, i) => i !== index);
-    setEntryRules(newRules.length > 0 ? newRules : ['']);
-  };
-
-  const handleExitRuleChange = (index, value) => {
-    const newRules = [...exitRules];
-    newRules[index] = value;
-    setExitRules(newRules);
-  };
-
-  const addExitRule = () => {
-    setExitRules([...exitRules, '']);
-  };
-
-  const removeExitRule = (index) => {
-    const newRules = exitRules.filter((_, i) => i !== index);
-    setExitRules(newRules.length > 0 ? newRules : ['']);
-  };
-
-  const handleCreateOrUpdateStrategy = async (e) => {
-    e.preventDefault();
-    const method = editStrategy ? 'PUT' : 'POST';
-    const url = editStrategy ? `https://taojournal-production.up.railway.app/strategies/${editStrategy.id}` : 'https://taojournal-production.up.railway.app/strategies';
-    try {
-      const res = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(strategyForm),
-      });
-      if (res.ok) {
-        const savedStrategy = await res.json();
-        // Now add rules if any
-        for (const ruleText of entryRules.filter(r => r.trim())) {
-          await fetch('https://taojournal-production.up.railway.app/rules', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ strategy_id: savedStrategy.id, rule_type: 'entry', rule_text: ruleText }),
-          });
-        }
-        for (const ruleText of exitRules.filter(r => r.trim())) {
-          await fetch('https://taojournal-production.up.railway.app/rules', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ strategy_id: savedStrategy.id, rule_type: 'exit', rule_text: ruleText }),
-          });
-        }
-        setShowStrategyEditModal(false);
-        setStrategyForm({ name: '', description: '' });
-        setEntryRules(['']);
-        setExitRules(['']);
-        setEditStrategy(null);
-        fetchStrategies();
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
-      } else {
-        setError('Failed to save strategy.');
-      }
-    } catch (err) {
-      console.error('Error saving strategy:', err);
-      setError('Error saving strategy.');
-    }
-  };
-
-  const openStrategyEdit = async (strategy) => {
-    setShowPlaybookModal(false);
-    setShowStrategyEditModal(true);
-    setEditStrategy(strategy);
-    setStrategyForm({ name: strategy.name, description: strategy.description });
-    const res = await fetch(`https://taojournal-production.up.railway.app/rules/${strategy.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const rulesData = await res.json();
-      setEntryRules(rulesData.filter(r => r.rule_type === 'entry').map(r => r.rule_text) || ['']);
-      setExitRules(rulesData.filter(r => r.rule_type === 'exit').map(r => r.rule_text) || ['']);
-    } else if (res.status === 401) {
-      console.log('Unauthorized - redirecting to login');
-      localStorage.removeItem('token');
-      navigate('/login');
-    }
-  };
-
-  const handleDeleteStrategy = async (id) => {
-    if (window.confirm('Delete this strategy?')) {
-      try {
-        const res = await fetch(`https://taojournal-production.up.railway.app/strategies/${id}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          fetchStrategies();
-        } else if (res.status === 401) {
-          console.log('Unauthorized - redirecting to login');
-          localStorage.removeItem('token');
-          navigate('/login');
-        } else {
-          setError('Failed to delete strategy.');
-        }
-      } catch (err) {
-        console.error('Error deleting strategy:', err);
-        setError('Error deleting strategy.');
-      }
-    }
+  const handleIBKRFormChange = (e) => {
+    setIBKRForm({ ...ibkrForm, [e.target.name]: e.target.value });
   };
 
   const handleAddTrade = async (e) => {
@@ -310,15 +176,10 @@ function Dashboard() {
       if (res.ok) {
         setShowNewModal(false);
         fetchTrades();
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
       } else {
         setError('Failed to add trade.');
       }
     } catch (err) {
-      console.error('Error adding trade:', err);
       setError('Error adding trade.');
     }
   };
@@ -330,7 +191,7 @@ function Dashboard() {
         rule_id: parseInt(rule_id),
         followed: ruleAdherence[rule_id]
       }));
-      const res = await fetch(`https://taojournal-production.up.railway.app/trades/${trades[editIndex].id}`, {
+      const res = await fetch(`https://taojournal-production.up.railway.app/trades/${editIndex}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -341,16 +202,59 @@ function Dashboard() {
       if (res.ok) {
         setShowEditModal(false);
         fetchTrades();
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
       } else {
         setError('Failed to update trade.');
       }
     } catch (err) {
-      console.error('Error updating trade:', err);
       setError('Error updating trade.');
+    }
+  };
+
+  const handleCreateStrategy = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/strategies', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(strategyForm),
+      });
+      if (res.ok) {
+        setShowStrategyModal(false);
+        setStrategyForm({ name: '', description: '' });
+        fetchStrategies();
+      } else {
+        setError('Failed to create strategy.');
+      }
+    } catch (err) {
+      setError('Error creating strategy.');
+    }
+  };
+
+  const handleCreateRule = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/rules', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(ruleForm),
+      });
+      if (res.ok) {
+        setShowRuleModal(false);
+        setRuleForm({ strategy_id: '', rule_type: 'entry', rule_text: '' });
+        if (formData.strategy_id) {
+          fetchRules(formData.strategy_id);
+        }
+      } else {
+        setError('Failed to create rule.');
+      }
+    } catch (err) {
+      setError('Error creating rule.');
     }
   };
 
@@ -364,31 +268,25 @@ function Dashboard() {
     });
     if (trade.strategy_id) {
       await fetchRules(trade.strategy_id);
-      await fetchTradeRules(trade.id); // This sets adherence based on saved data
+      await fetchTradeRules(index);
     }
     setShowEditModal(true);
   };
 
-  const handleDeleteTrade = async (id) => {
-    if (window.confirm('Delete this trade?')) {
-      try {
-        const res = await fetch(`https://taojournal-production.up.railway.app/trades/${id}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          fetchTrades();
-        } else if (res.status === 401) {
-          console.log('Unauthorized - redirecting to login');
-          localStorage.removeItem('token');
-          navigate('/login');
-        } else {
-          setError('Failed to delete trade.');
-        }
-      } catch (err) {
-        console.error('Error deleting trade:', err);
-        setError('Error deleting trade.');
+  const handleDeleteTrade = async (index) => {
+    if (!window.confirm('Delete this trade?')) return;
+    try {
+      const res = await fetch(`https://taojournal-production.up.railway.app/trades/${index}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        fetchTrades();
+      } else {
+        setError('Failed to delete trade.');
       }
+    } catch (err) {
+      setError('Error deleting trade.');
     }
   };
 
@@ -405,47 +303,101 @@ function Dashboard() {
       });
       if (res.ok) {
         fetchTrades();
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
       } else {
         setError('Failed to import CSV.');
       }
     } catch (err) {
-      console.error('Error importing CSV:', err);
       setError('Error importing CSV.');
     }
   };
 
-  const handleUploadImage = async (id, e) => {
+  const handleConnectIBKR = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/connect_ibkr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(ibkrForm),
+      });
+      if (res.ok) {
+        setShowIBKRModal(false);
+        setIBKRForm({ api_token: '', account_id: '' });
+      } else {
+        setError('Failed to connect IBKR.');
+      }
+    } catch (err) {
+      setError('Error connecting IBKR.');
+    }
+  };
+
+  const handleImportFromIBKR = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/import_from_ibkr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(importDates),
+      });
+      if (res.ok) {
+        fetchTrades();
+      } else {
+        setError('Failed to import trades from IBKR.');
+      }
+    } catch (err) {
+      setError('Error importing from IBKR.');
+    }
+  };
+
+  const handleImportFromSchwab = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('https://taojournal-production.up.railway.app/import_from_schwab', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(importDates),
+      });
+      if (res.ok) {
+        fetchTrades();
+      } else {
+        setError('Failed to import trades from Schwab.');
+      }
+    } catch (err) {
+      setError('Error importing from Schwab.');
+    }
+  };
+
+  const handleUploadImage = async (index, e) => {
     const file = e.target.files[0];
     if (!file) return;
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const res = await fetch(`https://taojournal-production.up.railway.app/trades/${id}/image`, {
+      const res = await fetch(`https://taojournal-production.up.railway.app/trades/${index}/image`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
       if (res.ok) {
         fetchTrades();
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
       } else {
         setError('Failed to upload image.');
       }
     } catch (err) {
-      console.error('Error uploading image:', err);
       setError('Error uploading image.');
     }
   };
 
-  const handleViewImage = (id) => {
-    window.open(`https://taojournal-production.up.railway.app/trades/${id}/image?token=${token}`, '_blank');
+  const handleViewImage = (index) => {
+    window.open(`https://taojournal-production.up.railway.app/trades/${index}/image?token=${token}`, '_blank');
   };
 
   const handleExport = async (type) => {
@@ -460,15 +412,10 @@ function Dashboard() {
         a.href = url;
         a.download = `trades.${type}`;
         a.click();
-      } else if (res.status === 401) {
-        console.log('Unauthorized - redirecting to login');
-        localStorage.removeItem('token');
-        navigate('/login');
       } else {
         setError(`Failed to export ${type.toUpperCase()}.`);
       }
     } catch (err) {
-      console.error('Error exporting:', err);
       setError('Error exporting.');
     }
   };
@@ -500,8 +447,11 @@ function Dashboard() {
         <button className="bg-blue-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-blue-600 transition flex items-center">
           <span className="mr-2">🔗</span> Connect to Broker
         </button>
-        <button onClick={() => setShowPlaybookModal(true)} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition flex items-center">
-          <span className="mr-2">📖</span> Playbook
+        <button onClick={() => setShowStrategyModal(true)} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition flex items-center">
+          <span className="mr-2">📋</span> Add Strategy
+        </button>
+        <button onClick={() => setShowRuleModal(true)} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition flex items-center">
+          <span className="mr-2">📏</span> Add Rule
         </button>
         <button onClick={() => handleExport('excel')} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600 transition flex items-center">
           <span className="mr-2">📤</span> Export to Excel
@@ -557,7 +507,7 @@ function Dashboard() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {trades.map((trade, index) => (
-                <tr key={trade.id} className={trade.direction === 'Long' ? 'hover:bg-green-100' : 'hover:bg-red-100'}>
+                <tr key={index} className={trade.direction === 'Long' ? 'hover:bg-green-100' : 'hover:bg-red-100'}>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.instrument}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.trade_type}</td>
                   <td className="px-6 py-4 whitespace-nowrap">{trade.buy_timestamp}</td>
@@ -579,17 +529,17 @@ function Dashboard() {
                   <td className="px-6 py-4">{trade.changes_needed}</td>
                   <td className="px-6 py-4">
                     {trade.image_path ? (
-                      <button onClick={() => handleViewImage(trade.id)} className="text-blue-600 hover:underline">View Image</button>
+                      <button onClick={() => handleViewImage(index)} className="text-blue-600 hover:underline">View Image</button>
                     ) : (
                       <label className="text-blue-600 hover:underline cursor-pointer">
                         Upload Image
-                        <input type="file" accept="image/*" onChange={(e) => handleUploadImage(trade.id, e)} className="hidden" />
+                        <input type="file" accept="image/*" onChange={(e) => handleUploadImage(index, e)} className="hidden" />
                       </label>
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <button onClick={() => openEditModal(index)} className="text-yellow-600 hover:underline mr-3">Edit</button>
-                    <button onClick={() => handleDeleteTrade(trade.id)} className="text-red-600 hover:underline">Delete</button>
+                    <button onClick={() => handleDeleteTrade(index)} className="text-red-600 hover:underline">Delete</button>
                   </td>
                 </tr>
               ))}
@@ -630,7 +580,7 @@ function Dashboard() {
                 <label key={rule.id} className="flex items-center">
                   <input
                     type="checkbox"
-                    checked={ruleAdherence[rule.id] !== false} // Default true
+                    checked={ruleAdherence[rule.id] || false}
                     onChange={() => handleRuleAdherenceChange(rule.id)}
                     className="mr-2"
                   />
@@ -689,7 +639,7 @@ function Dashboard() {
                 <label key={rule.id} className="flex items-center">
                   <input
                     type="checkbox"
-                    checked={ruleAdherence[rule.id] !== false} // Default true
+                    checked={ruleAdherence[rule.id] || false}
                     onChange={() => handleRuleAdherenceChange(rule.id)}
                     className="mr-2"
                   />
@@ -716,36 +666,12 @@ function Dashboard() {
         </div>
       )}
 
-      {/* Playbook Modal - List Strategies */}
-      {showPlaybookModal && (
+      {/* Strategy Modal */}
+      {showStrategyModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-8 rounded-lg shadow-2xl border border-gray-200 w-full max-w-md">
-            <h2 className="text-2xl font-bold mb-6 text-gray-800">Playbook</h2>
-            <button onClick={() => { setEditStrategy(null); setStrategyForm({ name: '', description: '' }); setEntryRules(['']); setExitRules(['']); setShowPlaybookModal(false); setShowStrategyEditModal(true); }} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 mb-4">Create New Strategy</button>
-            <ul className="space-y-2">
-              {strategies.map(strat => (
-                <li key={strat.id} className="flex justify-between items-center">
-                  <span>{strat.name}</span>
-                  <div>
-                    <button onClick={() => openStrategyEdit(strat)} className="text-yellow-600 hover:underline mr-3">Edit</button>
-                    <button onClick={() => handleDeleteStrategy(strat.id)} className="text-red-600 hover:underline">Delete</button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <div className="flex justify-end mt-6">
-              <button type="button" onClick={() => setShowPlaybookModal(false)} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600">Close</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Strategy Edit Modal - Create/Edit Strategy with Dynamic Rules */}
-      {showStrategyEditModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-8 rounded-lg shadow-2xl border border-gray-200 w-full max-w-md overflow-y-auto max-h-[80vh]">
-            <h2 className="text-2xl font-bold mb-6 text-gray-800">{editStrategy ? 'Edit Strategy' : 'Create New Strategy'}</h2>
-            <form onSubmit={handleCreateOrUpdateStrategy} className="space-y-4">
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">Add New Strategy</h2>
+            <form onSubmit={handleCreateStrategy} className="space-y-4">
               <input
                 name="name"
                 placeholder="Strategy Name (e.g., Breakout)"
@@ -762,35 +688,54 @@ function Dashboard() {
                 className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
                 rows="3"
               />
-              <h3 className="text-lg font-bold">Entry Rules</h3>
-              {entryRules.map((rule, index) => (
-                <div key={index} className="flex items-center">
-                  <input
-                    value={rule}
-                    onChange={(e) => handleEntryRuleChange(index, e.target.value)}
-                    placeholder={`Entry Rule ${index + 1}`}
-                    className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
-                  />
-                  <button type="button" onClick={() => removeEntryRule(index)} className="ml-2 text-red-600 hover:underline">-</button>
-                </div>
-              ))}
-              <button type="button" onClick={addEntryRule} className="text-blue-600 hover:underline">+ Add Entry Rule</button>
-              <h3 className="text-lg font-bold">Exit Rules</h3>
-              {exitRules.map((rule, index) => (
-                <div key={index} className="flex items-center">
-                  <input
-                    value={rule}
-                    onChange={(e) => handleExitRuleChange(index, e.target.value)}
-                    placeholder={`Exit Rule ${index + 1}`}
-                    className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
-                  />
-                  <button type="button" onClick={() => removeExitRule(index)} className="ml-2 text-red-600 hover:underline">-</button>
-                </div>
-              ))}
-              <button type="button" onClick={addExitRule} className="text-blue-600 hover:underline">+ Add Exit Rule</button>
               <div className="flex justify-end gap-4 mt-6">
-                <button type="button" onClick={() => { setShowStrategyEditModal(false); setShowPlaybookModal(true); }} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600">Cancel</button>
-                <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Save Strategy</button>
+                <button type="button" onClick={() => setShowStrategyModal(false)} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600">Cancel</button>
+                <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Add Strategy</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Rule Modal */}
+      {showRuleModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-lg shadow-2xl border border-gray-200 w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">Add New Rule</h2>
+            <form onSubmit={handleCreateRule} className="space-y-4">
+              <select
+                name="strategy_id"
+                value={ruleForm.strategy_id}
+                onChange={handleRuleInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+                required
+              >
+                <option value="">Select Strategy</option>
+                {strategies.map(strat => (
+                  <option key={strat.id} value={strat.id}>{strat.name}</option>
+                ))}
+              </select>
+              <select
+                name="rule_type"
+                value={ruleForm.rule_type}
+                onChange={handleRuleInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+              >
+                <option value="entry">Entry</option>
+                <option value="exit">Exit</option>
+              </select>
+              <textarea
+                name="rule_text"
+                placeholder="Rule Description (e.g., Volume > average)"
+                value={ruleForm.rule_text}
+                onChange={handleRuleInputChange}
+                className="w-full border border-gray-300 p-2 rounded focus:border-blue-500 focus:outline-none"
+                rows="3"
+                required
+              />
+              <div className="flex justify-end gap-4 mt-6">
+                <button type="button" onClick={() => setShowRuleModal(false)} className="bg-gray-500 text-white px-6 py-2 rounded hover:bg-gray-600">Cancel</button>
+                <button type="submit" className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700">Add Rule</button>
               </div>
             </form>
           </div>

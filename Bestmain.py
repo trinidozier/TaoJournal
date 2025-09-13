@@ -212,7 +212,7 @@ async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_ema
         (buy_price - sell_price) / (stop - buy_price)
     )
     r_multiple = round(r_multiple, 2)
-    multiplier = qty  # Simplified: no trade_type dependency
+    multiplier = qty * 100 if trade.trade_type in ("Call", "Put", "Straddle", "Covered Call", "Cash Secured Put") else qty
     pnl = round((sell_price - buy_price) * multiplier - fees, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier - fees, 2)
 
     query = trades.insert().values(
@@ -223,6 +223,7 @@ async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_ema
         sell_price=trade.sell_price,
         qty=trade.qty,
         direction=direction,
+        trade_type=trade.trade_type,
         strategy_id=trade.strategy_id,
         confidence=trade.confidence,
         target=trade.target,
@@ -246,7 +247,7 @@ async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_ema
                 followed=rule["followed"],
             )
         )
-    return {**trade.dict(exclude={'rule_adherence'}), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
+    return {**trade.dict(), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
 
 @app.put("/trades/{trade_id}", response_model=Trade)
 async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_current_user_email)):
@@ -261,7 +262,7 @@ async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_c
         (buy_price - sell_price) / (stop - buy_price)
     )
     r_multiple = round(r_multiple, 2)
-    multiplier = qty  # Simplified: no trade_type dependency
+    multiplier = qty * 100 if trade.trade_type in ("Call", "Put", "Straddle", "Covered Call", "Cash Secured Put") else qty
     pnl = round((sell_price - buy_price) * multiplier - fees, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier - fees, 2)
 
     query = trades.update().where(trades.c.id == trade_id, trades.c.user == email).values(
@@ -272,6 +273,7 @@ async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_c
         sell_price=trade.sell_price,
         qty=trade.qty,
         direction=direction,
+        trade_type=trade.trade_type,
         strategy_id=trade.strategy_id,
         confidence=trade.confidence,
         target=trade.target,
@@ -296,7 +298,7 @@ async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_c
                     followed=rule["followed"],
                 )
             )
-    return {**trade.dict(exclude={'rule_adherence'}), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
+    return {**trade.dict(), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
 
 @app.delete("/trades/{trade_id}")
 async def delete_trade(trade_id: int, email: str = Depends(get_current_user_email)):
@@ -461,12 +463,7 @@ async def get_brokers(email: str = Depends(get_current_user_email)):
 async def import_csv(file: UploadFile = File(...), email: str = Depends(get_current_user_email)):
     content = await file.read()
     trades = parse_smart_csv(io.BytesIO(content))
-    # Convert string timestamps to datetime objects
     for trade in trades:
-        if isinstance(trade["buy_timestamp"], str):
-            trade["buy_timestamp"] = datetime.fromisoformat(trade["buy_timestamp"])
-        if isinstance(trade["sell_timestamp"], str):
-            trade["sell_timestamp"] = datetime.fromisoformat(trade["sell_timestamp"])
         trade["user"] = email
         query = trades.insert().values(**trade)
         await database.execute(query)
@@ -638,7 +635,6 @@ def compute_equity_curve(trades):
 
 def compute_heatmap_hour(trades):
     # PnL by hour (2D for heatmap, but simplified as dict)
-    from collections import defaultdict
     heatmap = defaultdict(float)
     for t in trades:
         hour = datetime.fromisoformat(t['buy_timestamp']).hour
@@ -647,7 +643,6 @@ def compute_heatmap_hour(trades):
 
 def compute_heatmap_day(trades):
     # PnL by day of week (0=Monday)
-    from collections import defaultdict
     heatmap = defaultdict(float)
     for t in trades:
         day = datetime.fromisoformat(t['buy_timestamp']).weekday()

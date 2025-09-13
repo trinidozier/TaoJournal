@@ -102,20 +102,7 @@ const Analytics = () => {
   };
 
   const computeAnalytics = (filteredTrades) => {
-    if (filteredTrades.length === 0) return {
-      totalTrades: 0,
-      totalPnl: 0,
-      winRate: 0,
-      avgR: 0,
-      longPnl: 0,
-      shortPnl: 0,
-      byStrategy: {},
-      byRule: {},
-      byType: {},
-      byHour: {},
-      maxDrawdown: 0,
-      sharpe: 0,
-    };
+    if (filteredTrades.length === 0) return { totalTrades: 0, totalPnl: 0, winRate: 0, avgR: 0 };
 
     const totalTrades = filteredTrades.length;
     const totalPnl = filteredTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
@@ -207,7 +194,7 @@ const Analytics = () => {
   if (loading) return <div className="p-6 text-center">Loading analytics...</div>;
   if (error) return <div className="p-6 text-center text-red-500">{error}</div>;
 
-  const { totalTrades = 0, totalPnl = 0, winRate = 0, avgR = 0, longPnl = 0, shortPnl = 0, byStrategy = {}, byRule = {}, byType = {}, byHour = {}, maxDrawdown = 0, sharpe = 0 } = analyticsData;
+  const { totalTrades, totalPnl, winRate, avgR, longPnl, shortPnl, byStrategy, byRule, byType, byHour, maxDrawdown, sharpe } = analyticsData;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-blue-100 p-6">

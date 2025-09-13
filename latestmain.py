@@ -26,7 +26,7 @@ from auth import hash_password, verify_password
 from import_trades import parse_smart_csv
 from grouping import group_trades_by_entry_exit
 from export_tools import export_to_excel as export_excel_util, export_to_pdf as export_pdf_util
-from analytics import compute_summary_stats, compute_by_strategy, compute_by_rule, compute_by_trade_type, compute_by_hour, compute_by_day_of_week, compute_risk_metrics, compute_behavioral_insights
+from analytics import compute_summary_stats, compute_by_strategy, compute_by_rule, compute_by_trade_type, compute_by_hour, compute_by_day_of_week, compute_risk_metrics, compute_behavioral_insights, compute_equity_curve, compute_heatmap_hour, compute_heatmap_day
 from schemas import Strategy, StrategyCreate, Rule, RuleCreate, TradeIn, Trade, UserCreate, IBKRConnect, TradeRuleUpdate, Broker, BrokerCreate
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -212,7 +212,7 @@ async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_ema
         (buy_price - sell_price) / (stop - buy_price)
     )
     r_multiple = round(r_multiple, 2)
-    multiplier = qty  # Simplified: no trade_type dependency
+    multiplier = qty * 100 if trade.trade_type in ("Call", "Put", "Straddle", "Covered Call", "Cash Secured Put") else qty
     pnl = round((sell_price - buy_price) * multiplier - fees, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier - fees, 2)
 
     query = trades.insert().values(
@@ -223,6 +223,7 @@ async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_ema
         sell_price=trade.sell_price,
         qty=trade.qty,
         direction=direction,
+        trade_type=trade.trade_type,
         strategy_id=trade.strategy_id,
         confidence=trade.confidence,
         target=trade.target,
@@ -246,7 +247,7 @@ async def create_trade(trade: TradeIn, email: str = Depends(get_current_user_ema
                 followed=rule["followed"],
             )
         )
-    return {**trade.dict(exclude={'rule_adherence'}), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
+    return {**trade.dict(), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
 
 @app.put("/trades/{trade_id}", response_model=Trade)
 async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_current_user_email)):
@@ -261,7 +262,7 @@ async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_c
         (buy_price - sell_price) / (stop - buy_price)
     )
     r_multiple = round(r_multiple, 2)
-    multiplier = qty  # Simplified: no trade_type dependency
+    multiplier = qty * 100 if trade.trade_type in ("Call", "Put", "Straddle", "Covered Call", "Cash Secured Put") else qty
     pnl = round((sell_price - buy_price) * multiplier - fees, 2) if direction == "Long" else round((buy_price - sell_price) * multiplier - fees, 2)
 
     query = trades.update().where(trades.c.id == trade_id, trades.c.user == email).values(
@@ -272,6 +273,7 @@ async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_c
         sell_price=trade.sell_price,
         qty=trade.qty,
         direction=direction,
+        trade_type=trade.trade_type,
         strategy_id=trade.strategy_id,
         confidence=trade.confidence,
         target=trade.target,
@@ -296,7 +298,7 @@ async def update_trade(trade_id: int, trade: TradeIn, email: str = Depends(get_c
                     followed=rule["followed"],
                 )
             )
-    return {**trade.dict(exclude={'rule_adherence'}), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
+    return {**trade.dict(), "id": trade_id, "direction": direction, "pnl": pnl, "r_multiple": r_multiple, "user": email}
 
 @app.delete("/trades/{trade_id}")
 async def delete_trade(trade_id: int, email: str = Depends(get_current_user_email)):
@@ -340,7 +342,6 @@ async def create_strategy(strategy: StrategyCreate, email: str = Depends(get_cur
         user_email=email,
     )
     strategy_id = await database.execute(query)
-    strategy_id = strategy_id  # Adjust if needed for PostgreSQL
     return {**strategy.dict(), "id": strategy_id, "user_email": email, "created_at": datetime.utcnow()}
 
 @app.put("/strategies/{strategy_id}", response_model=Strategy)
@@ -414,242 +415,4 @@ async def connect_schwab(email: str = Depends(get_current_user_email)):
     try:
         client = easy_client(SCHWAB_CLIENT_ID, redirect_uri, None, asynchio=True)
         auth_url = client.get_auth_url()
-        return {"auth_url": auth_url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schwab auth error: {e}")
-
-@app.get("/callback")
-async def schwab_callback(code: str, email: str = Depends(get_current_user_email)):
-    redirect_uri = "https://127.0.0.1:8000/callback"
-    try:
-        client = easy_client(SCHWAB_CLIENT_ID, redirect_uri, None, asynchio=True)
-        client.get_access_token(code)
-        creds = encrypt_data(json.dumps(client.get_access_token()))
-        query = brokers.insert().values(
-            user_email=email,
-            broker_type="schwab",
-            creds_json=creds
-        )
-        await database.execute(query)
-        return {"message": "Schwab connected"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schwab callback error: {e}")
-
-@app.post("/connect_ibkr")
-async def connect_ibkr(ibkr: IBKRConnect, email: str = Depends(get_current_user_email)):
-    creds = {
-        "host": IBKR_HOST,
-        "port": int(IBKR_PORT),
-        "api_token": ibkr.api_token,
-        "account_id": ibkr.account_id,
-    }
-    encrypted = encrypt_data(json.dumps(creds))
-    query = brokers.insert().values(
-        user_email=email,
-        broker_type="ibkr",
-        creds_json=encrypted
-    )
-    await database.execute(query)
-    return {"message": "IBKR connected"}
-
-@app.get("/brokers", response_model=List[Broker])
-async def get_brokers(email: str = Depends(get_current_user_email)):
-    query = brokers.select().where(brokers.c.user_email == email)
-    return await database.fetch_all(query)
-
-@app.post("/import_csv")
-async def import_csv(file: UploadFile = File(...), email: str = Depends(get_current_user_email)):
-    content = await file.read()
-    trades = parse_smart_csv(io.BytesIO(content))
-    # Convert string timestamps to datetime objects
-    for trade in trades:
-        if isinstance(trade["buy_timestamp"], str):
-            trade["buy_timestamp"] = datetime.fromisoformat(trade["buy_timestamp"])
-        if isinstance(trade["sell_timestamp"], str):
-            trade["sell_timestamp"] = datetime.fromisoformat(trade["sell_timestamp"])
-        trade["user"] = email
-        query = trades.insert().values(**trade)
-        await database.execute(query)
-    return {"message": f"Imported {len(trades)} trades"}
-
-@app.post("/import_from_schwab")
-async def import_from_schwab(email: str = Depends(get_current_user_email)):
-    query = brokers.select().where(brokers.c.user_email == email, brokers.c.broker_type == "schwab")
-    broker = await database.fetch_one(query)
-    if not broker:
-        raise HTTPException(status_code=404, detail="Schwab not connected")
-    creds = json.loads(decrypt_data(broker["creds_json"]))
-    client = easy_client(SCHWAB_CLIENT_ID, "https://127.0.0.1:8000/callback", None, access_token=creds)
-    start = (datetime.utcnow() - timedelta(days=30)).date()
-    end = datetime.utcnow().date()
-    orders = client.get_transactions(start, end, Client.Account.TransactionTypes.TRADE).json()
-    trades = []
-    for order in orders:
-        legs = order.get("orderLegCollection", [])
-        if not legs:
-            continue
-        instr = legs[0].get("instrument", {})
-        trade = {
-            "instrument": instr.get("symbol", ""),
-            "buy_timestamp": order.get("transactionDate"),
-            "sell_timestamp": order.get("transactionDate"),
-            "buy_price": order.get("price", 0),
-            "sell_price": order.get("price", 0),
-            "qty": order.get("quantity", 0),
-            "direction": "Long" if order.get("side") == "BUY" else "Short",
-            "user": email,
-        }
-        query = trades.insert().values(**trade)
-        await database.execute(query)
-        trades.append(trade)
-    await database.execute(brokers.update().where(brokers.c.id == broker["id"]).values(last_import=datetime.utcnow()))
-    return {"message": f"Imported {len(trades)} trades from Schwab"}
-
-@app.post("/import_from_ibkr")
-async def import_from_ibkr(email: str = Depends(get_current_user_email)):
-    query = brokers.select().where(brokers.c.user_email == email, brokers.c.broker_type == "ibkr")
-    broker = await database.fetch_one(query)
-    if not broker:
-        raise HTTPException(status_code=404, detail="IBKR not connected")
-    # Placeholder for IBKR import logic
-    return {"message": "IBKR import not implemented"}
-
-@app.get("/export/{export_type}")
-async def export_trades(export_type: str, email: str = Depends(get_current_user_email)):
-    query = trades.select().where(trades.c.user == email)
-    trades_data = await database.fetch_all(query)
-    trades_data = [dict(t) for t in trades_data]
-    if export_type == "excel":
-        path = export_excel_util(trades_data)
-        return FileResponse(path, filename="trades.xlsx")
-    elif export_type == "pdf":
-        path = export_pdf_util(trades_data)
-        return FileResponse(path, filename="trades.pdf")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid export type")
-
-# ─── Analytics Endpoint ───────────────────────────────────────────────────────
-@app.get("/analytics")
-async def get_analytics(
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    strategy_id: Optional[int] = Query(None),
-    trade_type: Optional[str] = Query(None),
-    direction: Optional[str] = Query(None),
-    followed: Optional[str] = Query(None),  # 'followed', 'broken', 'all'
-    confidence_min: Optional[int] = Query(1),
-    confidence_max: Optional[int] = Query(5),
-    token: str = Depends(oauth2_scheme)
-):
-    user_email = get_current_user_email(token)
-    query = select(trades).where(trades.c.user == user_email)
-    db_trades = await database.fetch_all(query)
-    trades = [dict(row) for row in db_trades]
-
-    # Fetch rule adherence for each trade
-    for trade in trades:
-        query = trade_rules.select().where(trade_rules.c.trade_id == trade["id"])
-        trade["rule_adherence"] = [dict(row) for row in await database.fetch_all(query)]
-
-    # Apply filters
-    filtered_trades = apply_analytics_filters(trades, {
-        'start_date': start_date,
-        'end_date': end_date,
-        'strategy_id': strategy_id,
-        'trade_type': trade_type,
-        'direction': direction,
-        'followed': followed,
-        'confidence_min': confidence_min,
-        'confidence_max': confidence_max,
-    })
-
-    # Compute core summary
-    summary = compute_summary_stats(filtered_trades)
-
-    # Compute breakdowns
-    by_strategy = compute_by_strategy(filtered_trades)
-    by_rule = compute_by_rule(filtered_trades)
-    by_type = compute_by_trade_type(filtered_trades)
-    by_hour = compute_by_hour(filtered_trades)
-    by_day_of_week = compute_by_day_of_week(filtered_trades)
-
-    # Compute risk and behavioral metrics
-    risk_metrics = compute_risk_metrics(filtered_trades)
-    behavioral_insights = compute_behavioral_insights(filtered_trades)
-
-    # Equity curve data (PnL cumulative over time)
-    equity_curve = compute_equity_curve(filtered_trades)
-
-    # Heatmaps (e.g., PnL by hour/day)
-    heatmap_hour = compute_heatmap_hour(filtered_trades)
-    heatmap_day = compute_heatmap_day(filtered_trades)
-
-    return {
-        'summary': summary,
-        'by_strategy': by_strategy,
-        'by_rule': by_rule,
-        'by_type': by_type,
-        'by_hour': by_hour,
-        'by_day_of_week': by_day_of_week,
-        'risk_metrics': risk_metrics,
-        'behavioral_insights': behavioral_insights,
-        'equity_curve': equity_curve,
-        'heatmap_hour': heatmap_hour,
-        'heatmap_day': heatmap_day,
-    }
-
-def apply_analytics_filters(trades, filters):
-    filtered = trades
-    if filters['start_date']:
-        filtered = [t for t in filtered if t['buy_timestamp'] >= filters['start_date']]
-    if filters['end_date']:
-        filtered = [t for t in filtered if t['buy_timestamp'] <= filters['end_date']]
-    if filters['strategy_id']:
-        filtered = [t for t in filtered if t.get('strategy_id') == filters['strategy_id']]
-    if filters['trade_type']:
-        filtered = [t for t in filtered if t.get('trade_type') == filters['trade_type']]
-    if filters['direction']:
-        filtered = [t for t in filtered if t.get('direction') == filters['direction']]
-    if filters['followed'] != 'all':
-        filtered = [
-            t for t in filtered
-            if t.get('rule_adherence') and (
-                (filters['followed'] == 'followed' and all(ra['followed'] for ra in t['rule_adherence'])) or
-                (filters['followed'] == 'broken' and any(not ra['followed'] for ra in t['rule_adherence']))
-            )
-        ]
-    if filters['confidence_min']:
-        filtered = [t for t in filtered if (t.get('confidence') or 0) >= filters['confidence_min']]
-    if filters['confidence_max']:
-        filtered = [t for t in filtered if (t.get('confidence') or 0) <= filters['confidence_max']]
-    return filtered
-
-def compute_equity_curve(trades):
-    sorted_trades = sorted(trades, key=lambda t: t['buy_timestamp'])
-    curve = []
-    cumulative_pnl = 0
-    for t in sorted_trades:
-        cumulative_pnl += t.get('pnl', 0)
-        curve.append({
-            'date': t['buy_timestamp'][:10],  # YYYY-MM-DD
-            'pnl': cumulative_pnl
-        })
-    return curve
-
-def compute_heatmap_hour(trades):
-    # PnL by hour (2D for heatmap, but simplified as dict)
-    from collections import defaultdict
-    heatmap = defaultdict(float)
-    for t in trades:
-        hour = datetime.fromisoformat(t['buy_timestamp']).hour
-        heatmap[hour] += t.get('pnl', 0)
-    return dict(heatmap)
-
-def compute_heatmap_day(trades):
-    # PnL by day of week (0=Monday)
-    from collections import defaultdict
-    heatmap = defaultdict(float)
-    for t in trades:
-        day = datetime.fromisoformat(t['buy_timestamp']).weekday()
-        heatmap[day] += t.get('pnl', 0)
-    return dict(heatmap)
+        return
