@@ -36,7 +36,7 @@ from analytics import (
     compute_risk_metrics,
     compute_behavioral_insights
 )
-from schemas import Strategy, StrategyCreate, Rule, RuleCreate, TradeIn, Trade, UserCreate, TradeRuleUpdate 
+from schemas import Strategy, StrategyCreate, Rule, RuleCreate, TradeIn, Trade, UserCreate, TradeRuleUpdate
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pytz import timezone
@@ -415,55 +415,7 @@ async def update_trade_rule(trade_id: int, rule_id: int, update: TradeRuleUpdate
     await database.execute(query)
     return {**existing, "followed": update.followed}
 
-# ─── Brokers ─────────────────────────────────────────────────────────────────
-@app.post("/connect_schwab")
-async def connect_schwab(email: str = Depends(get_current_user_email)):
-    redirect_uri = "https://127.0.0.1:8000/callback"
-    try:
-        client = easy_client(SCHWAB_CLIENT_ID, redirect_uri, None, asynchio=True)
-        auth_url = client.get_auth_url()
-        return {"auth_url": auth_url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schwab auth error: {e}")
 
-@app.get("/callback")
-async def schwab_callback(code: str, email: str = Depends(get_current_user_email)):
-    redirect_uri = "https://127.0.0.1:8000/callback"
-    try:
-        client = easy_client(SCHWAB_CLIENT_ID, redirect_uri, None, asynchio=True)
-        client.get_access_token(code)
-        creds = encrypt_data(json.dumps(client.get_access_token()))
-        query = brokers.insert().values(
-            user_email=email,
-            broker_type="schwab",
-            creds_json=creds
-        )
-        await database.execute(query)
-        return {"message": "Schwab connected"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schwab callback error: {e}")
-
-@app.post("/connect_ibkr")
-async def connect_ibkr(ibkr: IBKRConnect, email: str = Depends(get_current_user_email)):
-    creds = {
-        "host": IBKR_HOST,
-        "port": int(IBKR_PORT),
-        "api_token": ibkr.api_token,
-        "account_id": ibkr.account_id,
-    }
-    encrypted = encrypt_data(json.dumps(creds))
-    query = brokers.insert().values(
-        user_email=email,
-        broker_type="ibkr",
-        creds_json=encrypted
-    )
-    await database.execute(query)
-    return {"message": "IBKR connected"}
-
-@app.get("/brokers", response_model=List[Broker])
-async def get_brokers(email: str = Depends(get_current_user_email)):
-    query = brokers.select().where(brokers.c.user_email == email)
-    return await database.fetch_all(query)
 
 @app.post("/import_csv")
 async def import_csv(file: UploadFile = File(...), email: str = Depends(get_current_user_email)):
@@ -480,47 +432,7 @@ async def import_csv(file: UploadFile = File(...), email: str = Depends(get_curr
         await database.execute(query)
     return {"message": f"Imported {len(trades)} trades"}
 
-@app.post("/import_from_schwab")
-async def import_from_schwab(email: str = Depends(get_current_user_email)):
-    query = brokers.select().where(brokers.c.user_email == email, brokers.c.broker_type == "schwab")
-    broker = await database.fetch_one(query)
-    if not broker:
-        raise HTTPException(status_code=404, detail="Schwab not connected")
-    creds = json.loads(decrypt_data(broker["creds_json"]))
-    client = easy_client(SCHWAB_CLIENT_ID, "https://127.0.0.1:8000/callback", None, access_token=creds)
-    start = (datetime.utcnow() - timedelta(days=30)).date()
-    end = datetime.utcnow().date()
-    orders = client.get_transactions(start, end, Client.Account.TransactionTypes.TRADE).json()
-    trades = []
-    for order in orders:
-        legs = order.get("orderLegCollection", [])
-        if not legs:
-            continue
-        instr = legs[0].get("instrument", {})
-        trade = {
-            "instrument": instr.get("symbol", ""),
-            "buy_timestamp": order.get("transactionDate"),
-            "sell_timestamp": order.get("transactionDate"),
-            "buy_price": order.get("price", 0),
-            "sell_price": order.get("price", 0),
-            "qty": order.get("quantity", 0),
-            "direction": "Long" if order.get("side") == "BUY" else "Short",
-            "user": email,
-        }
-        query = trades.insert().values(**trade)
-        await database.execute(query)
-        trades.append(trade)
-    await database.execute(brokers.update().where(brokers.c.id == broker["id"]).values(last_import=datetime.utcnow()))
-    return {"message": f"Imported {len(trades)} trades from Schwab"}
 
-@app.post("/import_from_ibkr")
-async def import_from_ibkr(email: str = Depends(get_current_user_email)):
-    query = brokers.select().where(brokers.c.user_email == email, brokers.c.broker_type == "ibkr")
-    broker = await database.fetch_one(query)
-    if not broker:
-        raise HTTPException(status_code=404, detail="IBKR not connected")
-    # Placeholder for IBKR import logic
-    return {"message": "IBKR import not implemented"}
 
 @app.get("/export/{export_type}")
 async def export_trades(export_type: str, email: str = Depends(get_current_user_email)):

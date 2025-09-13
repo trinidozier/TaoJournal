@@ -80,3 +80,6 @@ class UserCreate(BaseModel):
             raise ValueError("Passwords do not match")
         return v
 
+class TradeRuleUpdate(BaseModel):
+    followed: bool
+
