@@ -36,7 +36,7 @@ from analytics import (
     compute_risk_metrics,
     compute_behavioral_insights
 )
-from schemas import Strategy, StrategyCreate, Rule, RuleCreate, TradeIn, Trade, UserCreate, IBKRConnect, TradeRuleUpdate, Broker, BrokerCreate
+from schemas import Strategy, StrategyCreate, Rule, RuleCreate, TradeIn, Trade, UserCreate, TradeRuleUpdate, 
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pytz import timezone
