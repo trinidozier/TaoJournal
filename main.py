@@ -418,19 +418,30 @@ async def update_trade_rule(trade_id: int, rule_id: int, update: TradeRuleUpdate
 
 
 @app.post("/import_csv")
-async def import_csv(file: UploadFile = File(...), email: str = Depends(get_current_user_email)):
+async def import_csv(file: UploadFile = File(...), token: str = Depends(oauth2_scheme)):
+    user_email = get_current_user_email(token)
     content = await file.read()
-    trades = parse_smart_csv(io.BytesIO(content))
-    # Convert string timestamps to datetime objects
-    for trade in trades:
-        if isinstance(trade["buy_timestamp"], str):
-            trade["buy_timestamp"] = datetime.fromisoformat(trade["buy_timestamp"])
-        if isinstance(trade["sell_timestamp"], str):
-            trade["sell_timestamp"] = datetime.fromisoformat(trade["sell_timestamp"])
-        trade["user"] = email
-        query = trades.insert().values(**trade)
-        await database.execute(query)
-    return {"message": f"Imported {len(trades)} trades"}
+    trades_parsed = parse_smart_csv(content.decode("utf-8"))
+
+    inserted = 0
+    for trade in trades_parsed:
+        trade["user"] = user_email
+
+        # Validate required fields
+        required = ["instrument", "buy_price", "buy_timestamp"]
+        if not all(field in trade and trade[field] for field in required):
+            logger.warning(f"Skipping malformed trade: {trade}")
+            continue
+
+        try:
+            query = trades.insert().values(**trade)
+            await database.execute(query)
+            inserted += 1
+        except Exception as e:
+            logger.error(f"Failed to insert trade: {trade} — {e}")
+
+    return {"inserted": inserted}
+
 
 
 
