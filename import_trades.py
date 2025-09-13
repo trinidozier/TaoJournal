@@ -32,6 +32,7 @@ def parse_smart_csv(content: str) -> List[Dict]:
             'direction': ['side', 'action', 'type', 'buy/sell'],
             'stop': ['stop', 'stop'],
             'fees': ['fees', 'commission', 'cost'],
+            'instrument': ['symbol', 'ticker', 'instrument', 'asset']
         }
 
         # Map columns
@@ -63,13 +64,15 @@ def parse_smart_csv(content: str) -> List[Dict]:
                     mapped_df[key] = datetime.utcnow()
                 elif key == 'fees':
                     mapped_df[key] = 0.0
+                elif key == 'instrument':
+                    mapped_df[key] = 'Unknown'
 
         # Log unmapped columns
         if unmapped_columns:
             logger.warning(f"Unmapped columns in CSV: {unmapped_columns}")
 
         # Parse timestamps to datetime
-        date_formats = ['%Y-%m-%dT%H:%M:%S', '%m/%d/%Y %H:%M', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y']
+        date_formats = ['%Y-%m-%dT%H:%M:%S', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%m/%d/%Y']
         for col in ['buy_timestamp', 'sell_timestamp']:
             if col in mapped_df.columns:
                 for fmt in date_formats:
@@ -85,7 +88,14 @@ def parse_smart_csv(content: str) -> List[Dict]:
         price_cols = ['buy_price', 'sell_price', 'stop', 'fees']
         for col in price_cols:
             if col in mapped_df.columns:
-                mapped_df[col] = pd.to_numeric(mapped_df[col].astype(str).str.replace('$', '').str.replace('(', '-').str.replace(')', '').str.strip(), errors='coerce').fillna(0).astype(float)
+                mapped_df[col] = pd.to_numeric(
+                    mapped_df[col].astype(str)
+                    .str.replace('$', '')
+                    .str.replace('(', '-')
+                    .str.replace(')', '')
+                    .str.strip(),
+                    errors='coerce'
+                ).fillna(0).astype(float)
 
         # Clean qty
         if 'qty' in mapped_df.columns:
@@ -93,9 +103,17 @@ def parse_smart_csv(content: str) -> List[Dict]:
 
         # Clean direction
         if 'direction' in mapped_df.columns:
-            mapped_df['direction'] = mapped_df['direction'].str.upper().map({'BUY': 'Long', 'SELL': 'Short', 'LONG': 'Long', 'SHORT': 'Short'}).fillna('Long')
+            mapped_df['direction'] = mapped_df['direction'].astype(str).str.upper().map({
+                'BUY': 'Long',
+                'SELL': 'Short',
+                'LONG': 'Long',
+                'SHORT': 'Short'
+            }).fillna('Long')
         else:
-            mapped_df['direction'] = mapped_df.apply(lambda row: 'Long' if row.get('sell_price', 0) > row.get('buy_price', 0) else 'Short', axis=1)
+            mapped_df['direction'] = mapped_df.apply(
+                lambda row: 'Long' if row.get('sell_price', 0) > row.get('buy_price', 0) else 'Short',
+                axis=1
+            )
 
         # Group trades if needed
         grouped = mapped_df.to_dict('records') if 'direction' in mapped_df.columns and 'buy_timestamp' in mapped_df.columns else group_trades_by_entry_exit(mapped_df.to_dict('records'))
@@ -109,6 +127,7 @@ def parse_smart_csv(content: str) -> List[Dict]:
             direction = str(trade.get('direction', 'Long'))
             stop = float(trade.get('stop', buy_price * (0.9 if direction == 'Long' else 1.1)))
             trades.append({
+                "instrument": trade.get("instrument", "Unknown"),  # ✅ Added field
                 "buy_price": buy_price,
                 "sell_price": sell_price,
                 "qty": qty,
@@ -121,6 +140,7 @@ def parse_smart_csv(content: str) -> List[Dict]:
 
         logger.debug(f"Parsed {len(trades)} trades from CSV")
         return trades
+
     except pd.errors.EmptyDataError:
         logger.error("CSV is empty or invalid")
         raise ValueError("CSV is empty or invalid.")
