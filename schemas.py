@@ -3,6 +3,7 @@ from typing import Optional, List, Dict
 from datetime import datetime
 from fastapi import Query
 from pydantic import EmailStr
+from typing import Optional
 
 class StrategyBase(BaseModel):
     name: str
@@ -60,8 +61,8 @@ class TradeIn(BaseModel):
 
 class Trade(TradeIn):
     direction: str
-    pnl: float
-    r_multiple: float
+    pnl: Optional[float] = None         # ✅ Allow null
+    r_multiple: Optional[float] = None  # ✅ Allow null
     image_path: Optional[str] = ""
     user: str
     id: Optional[int] = None
