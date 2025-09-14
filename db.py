@@ -80,7 +80,8 @@ trades = Table(
     Column("preparedness", String, nullable=True),
     Column("what_i_learned", String, nullable=True),
     Column("changes_needed", String, nullable=True),
-    Column("user", String, nullable=False)  # Added user column
+    Column("user", String, nullable=False) ,# Added user column
+    Column("fees", Float, default=0.0, nullable=True)
 )
 
 # Users table — updated to match your expanded registration model
