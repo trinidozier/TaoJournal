@@ -80,11 +80,11 @@ trades = Table(
     Column("preparedness", String, nullable=True),
     Column("what_i_learned", String, nullable=True),
     Column("changes_needed", String, nullable=True),
-    Column("user", String, nullable=False) ,# Added user column
+    Column("user", String, nullable=False),
     Column("fees", Float, default=0.0, nullable=True)
 )
 
-# Users table — updated to match your expanded registration model
+# Users table
 users = Table(
     "users",
     metadata,
@@ -109,28 +109,29 @@ strategies = Table(
     Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
 )
 
-# Trade rules table
+# Trade rules table — Added original_rule_id column
 trade_rules = Table(
     "trade_rules",
     metadata,
     Column("id", Integer, primary_key=True),
     Column("strategy_id", Integer, nullable=False),
-    Column("rule_type", String(50), nullable=False),  # 'entry' or 'exit'
+    Column("rule_type", String(50), nullable=False),
     Column("rule_text", String, nullable=False),
-    Column("trade_id", Integer, nullable=True),  # Links to specific trade
+    Column("trade_id", Integer, nullable=True),
+    Column("original_rule_id", Integer, nullable=True),
     Column("followed", Boolean, server_default=text("FALSE"), nullable=False),
     Column("created_at", DateTime, server_default=text("CURRENT_TIMESTAMP")),
 )
 
-# Brokers table (updated: no unique on user_email for multiple brokers per user)
+# Brokers table
 brokers = Table(
     "brokers",
     metadata,
     Column("id", Integer, primary_key=True),
-    Column("user_email", String, nullable=False),  # Removed unique=True to allow multiple
-    Column("broker_type", String, nullable=False),  # 'ibkr' or 'schwab'
-    Column("creds_json", String, nullable=False),  # Encrypted JSON string of credentials
-    Column("last_import", DateTime, nullable=True),  # Timestamp of last successful import
+    Column("user_email", String, nullable=False),
+    Column("broker_type", String, nullable=False),
+    Column("creds_json", String, nullable=False),
+    Column("last_import", DateTime, nullable=True),
 )
 
 # Sync engine for migrations and metadata.create_all
@@ -160,4 +161,3 @@ def test_connection():
 
 if __name__ == "__main__":
     test_connection()
-
