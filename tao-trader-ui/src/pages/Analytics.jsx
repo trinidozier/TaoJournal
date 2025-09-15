@@ -1,26 +1,37 @@
+// Full corrected Analytics.jsx file
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar } from 'recharts';  # Removed invalid HeatMap
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  BarChart,
+  Bar,
+} from 'recharts';
 
 const Analytics = () => {
   const navigate = useNavigate();
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [strategies, setStrategies] = useState([]);  # For dropdowns
+  const [strategies, setStrategies] = useState([]);
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
     startTime: '00:00',
     endTime: '23:59',
     strategyId: '',
-    tradeType: 'All',  # All, Long, Short, Stock, Call, Put, etc.
-    direction: 'All',  # All, Long, Short
-    followed: 'All',  # All, Followed, Broken (for rules)
+    tradeType: 'All',
+    direction: 'All',
+    followed: 'All',
     confidenceMin: 1,
     confidenceMax: 5,
   });
-  const [analyticsData, setAnalyticsData] = useState({});  # Computed metrics
+  const [analyticsData, setAnalyticsData] = useState({});
   const token = localStorage.getItem('token');
 
   useEffect(() => {
@@ -34,7 +45,7 @@ const Analytics = () => {
 
   const fetchTrades = async () => {
     try {
-      const res = await fetch('https:#taojournal-production.up.railway.app/trades', {
+      const res = await fetch('https://taojournal-production.up.railway.app/trades', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -52,7 +63,7 @@ const Analytics = () => {
 
   const fetchStrategies = async () => {
     try {
-      const res = await fetch('https:#taojournal-production.up.railway.app/strategies', {
+      const res = await fetch('https://taojournal-production.up.railway.app/strategies', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -64,36 +75,32 @@ const Analytics = () => {
   };
 
   const applyFilters = (trades) => {
-    return trades.filter(trade => {
+    return trades.filter((trade) => {
       const buyDate = new Date(trade.buy_timestamp);
       const buyTime = buyDate.toTimeString().slice(0, 5);
 
-      # Date filter
       const startDate = filters.startDate ? new Date(filters.startDate) : null;
       const endDate = filters.endDate ? new Date(filters.endDate) : null;
       if (startDate && buyDate < startDate) return false;
       if (endDate && buyDate > endDate) return false;
 
-      # Time filter
       if (buyTime < filters.startTime || buyTime > filters.endTime) return false;
 
-      # Strategy filter
       if (filters.strategyId && trade.strategy_id !== parseInt(filters.strategyId)) return false;
 
-      # Trade type filter
       if (filters.tradeType !== 'All' && trade.trade_type !== filters.tradeType) return false;
 
-      # Direction filter
       if (filters.direction !== 'All' && trade.direction !== filters.direction) return false;
 
-      # Confidence filter
       const confidence = parseInt(trade.confidence) || 0;
       if (confidence < filters.confidenceMin || confidence > filters.confidenceMax) return false;
 
-      # Rule followed filter (simplified; for specific rule, we'd need rule_id param)
       if (filters.followed !== 'All') {
-        const avgFollowed = trade.rule_adherence ? trade.rule_adherence.filter(r => r.followed).length / trade.rule_adherence.length : 1;
-        if (filters.followed === 'Followed' && avgFollowed < 0.8) return false;  # 80% threshold
+        const avgFollowed =
+          trade.rule_adherence && trade.rule_adherence.length > 0
+            ? trade.rule_adherence.filter((r) => r.followed).length / trade.rule_adherence.length
+            : 1;
+        if (filters.followed === 'Followed' && avgFollowed < 0.8) return false;
         if (filters.followed === 'Broken' && avgFollowed > 0.8) return false;
       }
 
@@ -102,47 +109,47 @@ const Analytics = () => {
   };
 
   const computeAnalytics = (filteredTrades) => {
-    if (filteredTrades.length === 0) return {
-      totalTrades: 0,
-      totalPnl: 0,
-      winRate: 0,
-      avgR: 0,
-      longPnl: 0,
-      shortPnl: 0,
-      byStrategy: {},
-      byRule: {},
-      byType: {},
-      byHour: {},
-      maxDrawdown: 0,
-      sharpe: 0,
-    };
+    if (filteredTrades.length === 0)
+      return {
+        totalTrades: 0,
+        totalPnl: 0,
+        winRate: 0,
+        avgR: 0,
+        longPnl: 0,
+        shortPnl: 0,
+        byStrategy: {},
+        byRule: {},
+        byType: {},
+        byHour: {},
+        maxDrawdown: 0,
+        sharpe: 0,
+      };
 
     const totalTrades = filteredTrades.length;
     const totalPnl = filteredTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
-    const wins = filteredTrades.filter(t => (t.r_multiple || 0) > 0).length;
+    const wins = filteredTrades.filter((t) => (t.r_multiple || 0) > 0).length;
     const winRate = ((wins / totalTrades) * 100).toFixed(1);
-    const avgR = (filteredTrades.reduce((sum, t) => sum + (t.r_multiple || 0), 0) / totalTrades).toFixed(2);
+    const avgR = (
+      filteredTrades.reduce((sum, t) => sum + (t.r_multiple || 0), 0) / totalTrades
+    ).toFixed(2);
 
-    # Long/Short
-    const longs = filteredTrades.filter(t => t.direction === 'Long');
-    const shorts = filteredTrades.filter(t => t.direction === 'Short');
+    const longs = filteredTrades.filter((t) => t.direction === 'Long');
+    const shorts = filteredTrades.filter((t) => t.direction === 'Short');
     const longPnl = longs.reduce((sum, t) => sum + (t.pnl || 0), 0);
     const shortPnl = shorts.reduce((sum, t) => sum + (t.pnl || 0), 0);
 
-    # By Strategy
     const byStrategy = {};
-    filteredTrades.forEach(t => {
-      const stratName = strategies.find(s => s.id === t.strategy_id)?.name || 'No Strategy';
+    filteredTrades.forEach((t) => {
+      const stratName = strategies.find((s) => s.id === t.strategy_id)?.name || 'No Strategy';
       if (!byStrategy[stratName]) byStrategy[stratName] = { trades: 0, pnl: 0, wins: 0 };
       byStrategy[stratName].trades++;
       byStrategy[stratName].pnl += t.pnl || 0;
       if ((t.r_multiple || 0) > 0) byStrategy[stratName].wins++;
     });
 
-    # By Rule (simplified; group by rule_type + followed)
     const byRule = {};
-    filteredTrades.forEach(t => {
-      t.rule_adherence?.forEach(ra => {
+    filteredTrades.forEach((t) => {
+      t.rule_adherence?.forEach((ra) => {
         const key = `${t.strategy_id}_${ra.rule_id}_${ra.followed ? 'Followed' : 'Broken'}`;
         if (!byRule[key]) byRule[key] = { trades: 0, pnl: 0, wins: 0 };
         byRule[key].trades++;
@@ -151,9 +158,8 @@ const Analytics = () => {
       });
     });
 
-    # By Trade Type
     const byType = {};
-    filteredTrades.forEach(t => {
+    filteredTrades.forEach((t) => {
       const type = t.trade_type || 'Other';
       if (!byType[type]) byType[type] = { trades: 0, pnl: 0, wins: 0 };
       byType[type].trades++;
@@ -161,9 +167,8 @@ const Analytics = () => {
       if ((t.r_multiple || 0) > 0) byType[type].wins++;
     });
 
-    # Time Breakdown (Hour of Day)
     const byHour = {};
-    filteredTrades.forEach(t => {
+    filteredTrades.forEach((t) => {
       const hour = new Date(t.buy_timestamp).getHours();
       if (!byHour[hour]) byHour[hour] = { trades: 0, pnl: 0, wins: 0 };
       byHour[hour].trades++;
@@ -171,25 +176,20 @@ const Analytics = () => {
       if ((t.r_multiple || 0) > 0) byHour[hour].wins++;
     });
 
-    # Risk Metrics (simplified)
-	// ✅ Filter out trades with invalid or missing pnl
-	const sortedPnL = filteredTrades
-	.filter(t => typeof t.pnl === 'number' && !isNaN(t.pnl))
-	.map(t => t.pnl)
-	.sort((a, b) => a - b);
+    const sortedPnL = filteredTrades
+      .filter((t) => typeof t.pnl === 'number' && !isNaN(t.pnl))
+      .map((t) => t.pnl)
+      .sort((a, b) => a - b);
 
-	// ✅ Compute max drawdown safely
-	const maxDrawdown = sortedPnL.length > 1
-	? sortedPnL.slice(0, -1).reduce((drawdown, pnl, i) => {
-		const peak = Math.max(...sortedPnL.slice(0, i + 1));
-		return Math.min(drawdown, pnl - peak);
-		}, 0)
-	: 0;
+    const maxDrawdown =
+      sortedPnL.length > 1
+        ? sortedPnL.slice(0, -1).reduce((drawdown, pnl, i) => {
+            const peak = Math.max(...sortedPnL.slice(0, i + 1));
+            return Math.min(drawdown, pnl - peak);
+          }, 0)
+        : 0;
 
-	// ✅ Simplified Sharpe ratio (risk-free rate assumed 0)
-	const sharpe = totalTrades > 0
-	? totalPnl / Math.sqrt(totalTrades)
-	: 0;
+    const sharpe = totalTrades > 0 ? totalPnl / Math.sqrt(totalTrades) : 0;
 
     return {
       totalTrades,
@@ -213,20 +213,37 @@ const Analytics = () => {
   }, [trades, filters]);
 
   const handleFilterChange = (key, value) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
+    setFilters((prev) => ({ ...prev, [key]: value }));
   };
 
   if (loading) return <div className="p-6 text-center">Loading analytics...</div>;
   if (error) return <div className="p-6 text-center text-red-500">{error}</div>;
 
-  const { totalTrades = 0, totalPnl = 0, winRate = 0, avgR = 0, longPnl = 0, shortPnl = 0, byStrategy = {}, byRule = {}, byType = {}, byHour = {}, maxDrawdown = 0, sharpe = 0 } = analyticsData;
+  // Full JSX layout continues here...
+    const {
+    totalTrades = 0,
+    totalPnl = 0,
+    winRate = 0,
+    avgR = 0,
+    longPnl = 0,
+    shortPnl = 0,
+    byStrategy = {},
+    byRule = {},
+    byType = {},
+    byHour = {},
+    maxDrawdown = 0,
+    sharpe = 0,
+  } = analyticsData;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-100 to-blue-100 p-6">
       {/* Header with Return Button */}
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-4xl font-bold text-gray-800">Analytics Dashboard</h1>
-        <button onClick={() => navigate('/dashboard')} className="bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition">
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="bg-blue-500 text-white px-6 py-2 rounded-lg shadow-md hover:bg-blue-600 transition"
+        >
           Return to Dashboard
         </button>
       </div>
@@ -429,10 +446,20 @@ const Analytics = () => {
 
       {/* Export Buttons */}
       <div className="flex gap-4">
-        <button onClick={() => {/* Export logic using backend /export/analytics */}} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600">
+        <button
+          onClick={() => {
+            // TODO: Implement CSV export logic
+          }}
+          className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600"
+        >
           Export Summary (CSV)
         </button>
-        <button onClick={() => {/* Similar for PDF */}} className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600">
+        <button
+          onClick={() => {
+            // TODO: Implement PDF export logic
+          }}
+          className="bg-purple-500 text-white px-6 py-3 rounded-lg shadow-md hover:bg-purple-600"
+        >
           Export Report (PDF)
         </button>
       </div>
@@ -441,3 +468,4 @@ const Analytics = () => {
 };
 
 export default Analytics;
+
