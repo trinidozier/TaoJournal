@@ -520,8 +520,9 @@ def read_root():
 # Create tables on startup
 @app.on_event("startup")
 async def startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(metadata.create_all)
+    # Use synchronous connection for metadata.create_all
+    with engine.connect() as conn:
+        metadata.create_all(conn)
     await database.connect()
 
 @app.on_event("shutdown")
